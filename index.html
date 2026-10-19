@@ -329,6 +329,16 @@ td.note { max-width: 220px; overflow: hidden; text-overflow: ellipsis; color: va
 .quick-fill { display: flex; flex-wrap: wrap; gap: 8px; }
 .quick-fill:empty { display: none; }
 
+/* Exchange import */
+.ex-import { display: flex; flex-direction: column; gap: 10px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+.ex-import h3 { margin: 0; font: 600 15px/1.3 var(--font-display); }
+.ex-import p { margin: 0; font-size: 14px; }
+.ex-preview { display: flex; flex-direction: column; gap: 10px; }
+.ex-preview:empty { display: none; }
+.ex-preview .table-scroll { border: 1px solid var(--line); border-radius: 8px; }
+.ex-preview table { font-size: 13px; }
+.ex-preview th, .ex-preview td { padding: 6px 10px; }
+
 /* Dialogs */
 dialog {
   width: min(640px, calc(100vw - 24px)); max-height: calc(100dvh - 24px);
@@ -627,6 +637,15 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
       </button>
     </div>
     <p class="muted" style="margin:0;font-size:14px">Данные хранятся только в этом браузере. Сохраняйте резервную копию, чтобы не потерять журнал или перенести его на другое устройство.</p>
+    <section class="ex-import" aria-labelledby="exTitle">
+      <h3 id="exTitle">Сделки с биржи</h3>
+      <p class="muted">Загрузите выгрузку истории в CSV или Excel: Bybit → «Закрытые P&amp;L» (Closed P&amp;L) → экспорт, Binance → «Ордера» → «История сделок» или «История позиций» → экспорт. Позиции соберутся сами, а повторная загрузка того же файла не создаст дублей.</p>
+      <div class="dialog-foot" style="justify-content:flex-start">
+        <label class="btn" for="exFile" style="cursor:pointer">Выбрать файл с биржи…</label>
+        <input type="file" id="exFile" accept=".csv,.xlsx,text/csv" hidden>
+      </div>
+      <div class="ex-preview" id="exPreview" aria-live="polite"></div>
+    </section>
     <div class="dialog-foot" style="justify-content:flex-start">
       <button type="button" class="btn" id="btnDownloadJson">Скачать JSON</button>
       <button type="button" class="btn" id="btnDownloadCsv">Скачать CSV</button>
@@ -2057,6 +2076,277 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
   });
   $('#btnImportAdd').addEventListener('click', () => doImport('add'));
   $('#btnImportReplace').addEventListener('click', () => doImport('replace'));
+
+  // ---------- Exchange import ----------
+
+  // Column names differ between exchanges and report types, so each field lists the headers it is known by.
+  // Headers are compared lowercased with everything but letters and digits removed ("Avg. Close Price" -> "avgcloseprice").
+  const EX_FIELDS = {
+    symbol: ['symbol', 'contracts', 'contract', 'pair', 'market', 'instrument', 'ticker'],
+    closingSide: ['closingdirection', 'closeside', 'closingside'],
+    side: ['side', 'direction', 'positionside', 'type', 'tradeside'],
+    qty: ['qty', 'quantity', 'closedqty', 'closedvol', 'closedvolume', 'closedquantity', 'size', 'executed', 'filled', 'executedqty', 'maxopeninterest', 'positionsize'],
+    entry: ['entryprice', 'avgentryprice', 'averageentryprice', 'openprice', 'avgopenprice', 'avgopeningprice', 'openingprice'],
+    exit: ['exitprice', 'avgexitprice', 'closeprice', 'avgcloseprice', 'averagecloseprice', 'closingprice', 'avgclosingprice'],
+    price: ['price', 'avgprice', 'averageprice', 'fillprice', 'execprice', 'executionprice', 'tradeprice'],
+    pnl: ['closedpl', 'closedpnl', 'realizedpnl', 'realizedprofit', 'closingpnl', 'pnl', 'profit', 'netpnl', 'realisedpnl'],
+    fee: ['fee', 'fees', 'commission', 'tradingfee', 'execfee'],
+    openFee: ['openingfee', 'openfee'],
+    closeFee: ['closingfee', 'closefee'],
+    fundingFee: ['fundingfee', 'funding'],
+    openedAt: ['opentime', 'opened', 'openedtime', 'createtime', 'createdtime', 'entrytime', 'opentimeutc', 'createdat'],
+    closedAt: ['closetime', 'closed', 'closedtime', 'tradetime', 'exittime', 'updatedtime', 'updatetime', 'closetimeutc', 'closedat'],
+    time: ['date', 'dateutc', 'time', 'datetime', 'timeutc', 'tradetime', 'filltime', 'exectime', 'createtime'],
+  };
+
+  const normKey = (h) => String(h).toLowerCase().replace(/\(utc[^)]*\)/g, '').replace(/[^a-zа-я0-9]/g, '');
+
+  function exColumns(headers) {
+    const keys = headers.map(normKey);
+    const col = {};
+    for (const [field, aliases] of Object.entries(EX_FIELDS)) {
+      const alias = aliases.find((name) => keys.includes(name));
+      if (alias) col[field] = headers[keys.indexOf(alias)];
+    }
+    return col;
+  }
+
+  // "1,234.56", "0.015BTC", "280 USDT", "-12,5" -> { value, asset }
+  function exNum(raw) {
+    const str = String(raw ?? '').trim();
+    const m = /^([A-Za-z]*)\s*([-+]?[\d.,]+(?:[eE][-+]?\d+)?)\s*([A-Za-z]*)$/.exec(str.replace(/\s(?=\d)/g, ''));
+    if (!m) return { value: null, asset: '' };
+    let n = m[2];
+    if (n.includes('.') && n.includes(',')) n = n.replace(/,/g, '');
+    else if (/^[-+]?\d{1,3}(,\d{3})+$/.test(n)) n = n.replace(/,/g, '');
+    else n = n.replace(',', '.');
+    const value = Number(n);
+    return { value: Number.isFinite(value) ? value : null, asset: (m[3] || m[1] || '').toUpperCase() };
+  }
+
+  // Exchange times are UTC unless the header names another offset, e.g. "Trade Time(UTC+3)".
+  function exTime(raw, header) {
+    const str = String(raw ?? '').trim();
+    if (!str) return null;
+    if (/^\d{12,13}$/.test(str)) return new Date(Number(str));
+    const off = /utc\s*([+-])\s*(\d{1,2})(?::?(\d{2}))?/i.exec(header || '');
+    const offsetMin = off ? (off[1] === '-' ? -1 : 1) * (Number(off[2]) * 60 + Number(off[3] || 0)) : 0;
+    let m = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(str);
+    let y, mo, d;
+    if (m) { [y, mo, d] = [m[1], m[2], m[3]]; }
+    else {
+      m = /^(\d{1,2})[./](\d{1,2})[./](\d{4})[ T,]+(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(str);
+      if (!m) { const t = new Date(str); return Number.isNaN(t.getTime()) ? null : t; }
+      [d, mo, y] = [m[1], m[2], m[3]];
+    }
+    const ms = Date.UTC(+y, +mo - 1, +d, +m[4], +m[5], +(m[6] || 0)) - offsetMin * 60000;
+    return new Date(ms);
+  }
+
+  function exchangeName(headers) {
+    const keys = headers.map(normKey);
+    if (keys.includes('contracts') || keys.includes('closingdirection') || keys.some((k) => k.startsWith('tradetime'))) return 'Bybit';
+    if (keys.includes('dateutc') || keys.includes('realizedprofit') || keys.includes('executed') || keys.includes('closingpnl')) return 'Binance';
+    return 'биржа';
+  }
+
+  function hashId(str) {
+    let h1 = 5381, h2 = 52711;
+    for (let i = 0; i < str.length; i++) {
+      const c = str.charCodeAt(i);
+      h1 = (h1 * 33) ^ c;
+      h2 = (h2 * 33) ^ c;
+    }
+    return 'ex_' + (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36);
+  }
+
+  function exTrade(exchange, f) {
+    const t = {
+      symbol: String(f.symbol).trim().toUpperCase().replace(/[^A-Z0-9._-]/g, ''),
+      market: 'Крипто',
+      side: f.side,
+      openedAt: localIso(f.openedAt),
+      closedAt: f.closedAt ? localIso(f.closedAt) : '',
+      entry: +f.entry.toPrecision(10),
+      exit: f.exit === null ? null : +f.exit.toPrecision(10),
+      qty: +f.qty.toPrecision(10),
+      fees: Math.round(f.fees * 1e6) / 1e6,
+      stop: null, target: null, setup: '', images: [],
+      notes: `Импорт: ${exchange}`,
+    };
+    t.id = hashId([exchange, t.symbol, t.side, t.openedAt, t.closedAt, t.entry, t.exit, t.qty].join('|'));
+    return t;
+  }
+
+  // Closed-position reports: one row per closed position with entry and exit prices.
+  function parsePositions(rows, col, exchange) {
+    const out = [];
+    let skipped = 0;
+    for (const r of rows) {
+      const entry = exNum(r[col.entry]).value, exit = exNum(r[col.exit]).value, qty = Math.abs(exNum(r[col.qty]).value ?? NaN);
+      const closedAt = exTime(r[col.closedAt || col.time], col.closedAt || col.time);
+      const openedAt = (col.openedAt && exTime(r[col.openedAt], col.openedAt)) || closedAt;
+      if (!r[col.symbol] || !entry || !exit || !Number.isFinite(qty) || !qty || !closedAt) { skipped++; continue; }
+      const pnl = col.pnl ? exNum(r[col.pnl]).value : null;
+      // A closing Sell ends a Long; elsewhere "Buy"/"Long" opens a Long.
+      const sideRaw = String(r[col.closingSide] || r[col.side] || '').toLowerCase();
+      let side = null;
+      if (/short/.test(sideRaw)) side = 'short';
+      else if (/long/.test(sideRaw)) side = 'long';
+      else if (/sell|buy/.test(sideRaw)) side = (/sell/.test(sideRaw) === Boolean(col.closingSide)) ? 'long' : 'short';
+      if (!side && pnl !== null) side = (exit - entry) * pnl >= 0 ? 'long' : 'short';
+      if (!side) { skipped++; continue; }
+      const dir = side === 'short' ? -1 : 1;
+      const listedFees = [col.fee, col.openFee, col.closeFee, col.fundingFee].filter(Boolean)
+        .reduce((a, k) => a + Math.abs(exNum(r[k]).value || 0), 0);
+      // When the report has its own P&L, fees are set so the journal shows the same net result as the exchange.
+      const fees = pnl !== null ? (exit - entry) * qty * dir - pnl : listedFees;
+      out.push(exTrade(exchange, { symbol: r[col.symbol], side, openedAt, closedAt, entry, exit, qty, fees }));
+    }
+    return { trades: out, skipped, kind: 'закрытые позиции' };
+  }
+
+  // Fill-by-fill trade history: positions are rebuilt per symbol from buys and sells in time order.
+  // Spot history cannot go short, so sells with no position to close (coins bought before the export) are skipped.
+  function parseFills(rows, col, exchange) {
+    const futures = Boolean(col.pnl);
+    const fills = [];
+    let skipped = 0;
+    for (const r of rows) {
+      const symbol = String(r[col.symbol] || '').trim().toUpperCase();
+      const sideRaw = String(r[col.side] || '').toLowerCase();
+      const price = exNum(r[col.price]).value;
+      const qty = Math.abs(exNum(r[col.qty]).value ?? NaN);
+      const at = exTime(r[col.time || col.closedAt], col.time || col.closedAt);
+      if (!symbol || !/buy|sell|long|short/.test(sideRaw) || !price || !Number.isFinite(qty) || !qty || !at) { skipped++; continue; }
+      const fee = col.fee ? exNum(r[col.fee]) : { value: 0, asset: '' };
+      // A fee charged in the base coin ("0.002SOL" on SOLUSDT) is converted to the quote currency.
+      const feeValue = Math.abs(fee.value || 0) * (fee.asset && symbol.startsWith(fee.asset) && !/USD|EUR|RUB|TRY|BRL/.test(fee.asset) ? price : 1);
+      fills.push({ symbol, buy: /buy|long/.test(sideRaw), price, qty, at, fee: feeValue });
+    }
+    fills.sort((a, b) => a.at - b.at);
+
+    const out = [];
+    const open = new Map();
+    const EPS = 1e-12;
+    const startPos = (f, qty, fee) => ({ symbol: f.symbol, side: f.buy ? 'long' : 'short', openedAt: f.at, entryQty: qty, entryValue: qty * f.price, exitQty: 0, exitValue: 0, fees: fee, size: qty });
+    for (const f of fills) {
+      let p = open.get(f.symbol);
+      if (!p) {
+        if (!f.buy && !futures) { skipped++; continue; }
+        open.set(f.symbol, startPos(f, f.qty, f.fee));
+        continue;
+      }
+      const adds = (p.side === 'long') === f.buy;
+      if (adds) {
+        p.entryQty += f.qty; p.entryValue += f.qty * f.price; p.fees += f.fee; p.size += f.qty;
+        continue;
+      }
+      const closeQty = Math.min(f.qty, p.size);
+      p.exitQty += closeQty; p.exitValue += closeQty * f.price; p.fees += f.fee * (closeQty / f.qty); p.size -= closeQty;
+      if (p.size <= EPS * Math.max(1, p.entryQty)) {
+        out.push(exTrade(exchange, { symbol: p.symbol, side: p.side, openedAt: p.openedAt, closedAt: f.at, entry: p.entryValue / p.entryQty, exit: p.exitValue / p.exitQty, qty: p.entryQty, fees: p.fees }));
+        open.delete(f.symbol);
+        const rest = f.qty - closeQty;
+        if (rest > EPS * f.qty) {
+          if (futures) open.set(f.symbol, startPos(f, rest, f.fee * (rest / f.qty)));
+          else skipped++;
+        }
+      }
+    }
+    for (const p of open.values()) {
+      out.push(exTrade(exchange, { symbol: p.symbol, side: p.side, openedAt: p.openedAt, closedAt: null, entry: p.entryValue / p.entryQty, exit: null, qty: p.size, fees: p.fees }));
+    }
+    return { trades: out, skipped, kind: futures ? 'история сделок (фьючерсы)' : 'история сделок (спот)' };
+  }
+
+  function parseExchange(rows) {
+    if (!rows.length) throw new Error('В файле нет строк с данными.');
+    const headers = Object.keys(rows[0]);
+    const col = exColumns(headers);
+    const exchange = exchangeName(headers);
+    if (col.symbol && col.entry && col.exit && col.qty && (col.closedAt || col.time)) return { exchange, ...parsePositions(rows, col, exchange) };
+    if (col.symbol && col.side && col.price && col.qty && (col.time || col.closedAt)) return { exchange, ...parseFills(rows, col, exchange) };
+    const err = new Error(`Не получилось узнать формат файла. Нашлись колонки: ${headers.join(', ')}. Нужны тикер, направление, цена, количество и время. Пришлите эту строку Claude, и он добавит поддержку вашего формата.`);
+    err.headers = headers;
+    throw err;
+  }
+
+  let xlsxPromise = null;
+  function loadXlsx() {
+    if (window.XLSX) return Promise.resolve(window.XLSX);
+    if (!xlsxPromise) {
+      xlsxPromise = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+        script.onload = () => resolve(window.XLSX);
+        script.onerror = () => { xlsxPromise = null; reject(new Error('Не удалось загрузить модуль для Excel. Проверьте интернет или выгрузите файл в CSV.')); };
+        document.head.appendChild(script);
+      });
+    }
+    return xlsxPromise;
+  }
+
+  async function readExchangeFile(file) {
+    if (/\.xlsx$/i.test(file.name)) {
+      const XLSX = await loadXlsx();
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { raw: false, defval: '' });
+    }
+    const text = (await file.text()).replace(/^﻿/, '');
+    return parseCsv(text);
+  }
+
+  let exPending = null;
+
+  function renderExPreview(result, fileName) {
+    const box = $('#exPreview');
+    const ids = new Set(state.sample ? [] : state.trades.map((t) => t.id));
+    const fresh = result.trades.filter((t) => !ids.has(t.id));
+    const known = result.trades.length - fresh.length;
+    const openN = fresh.filter((t) => t.exit === null).length;
+    exPending = fresh;
+    const sample = fresh.slice().sort((a, b) => b.openedAt.localeCompare(a.openedAt)).slice(0, 5);
+    box.innerHTML = `
+      <p>Файл «${escapeHtml(fileName)}»: ${escapeHtml(result.exchange)}, ${escapeHtml(result.kind)}. Новых сделок: <b>${fresh.length}</b>${openN ? ` (из них открытых: ${openN})` : ''}${known ? `, уже есть в журнале: ${known}` : ''}${result.skipped ? `, пропущено строк: ${result.skipped}` : ''}.</p>
+      ${sample.length ? `<div class="table-scroll"><table>
+        <thead><tr><th>Дата</th><th>Тикер</th><th>Напр.</th><th class="r">Вход</th><th class="r">Выход</th><th class="r">Объём</th><th class="r">P&amp;L</th></tr></thead>
+        <tbody>${sample.map((t) => { const c = calc(t); return `<tr><td class="num">${escapeHtml(fmtDate(t.openedAt))}</td><td>${escapeHtml(t.symbol)}</td><td>${t.side === 'long' ? 'Long' : 'Short'}</td><td class="r num">${nfPrice.format(t.entry)}</td><td class="r num">${c.closed ? nfPrice.format(t.exit) : 'открыта'}</td><td class="r num">${nfQty.format(t.qty)}</td><td class="r num ${tone(c.pnl)}">${c.closed ? escapeHtml(money(c.pnl)) : '—'}</td></tr>`; }).join('')}</tbody>
+      </table></div>` : ''}
+      <div class="dialog-foot" style="justify-content:flex-start">
+        <button type="button" class="btn primary" id="btnExAdd" ${fresh.length ? '' : 'disabled'}>${fresh.length ? `Добавить ${fresh.length} ${plural(fresh.length, 'сделку', 'сделки', 'сделок')}` : 'Новых сделок нет'}</button>
+      </div>`;
+  }
+
+  $('#exFile').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    const box = $('#exPreview');
+    box.innerHTML = '<p class="muted">Читаю файл…</p>';
+    try {
+      const rows = await readExchangeFile(file);
+      renderExPreview(parseExchange(rows), file.name);
+    } catch (err) {
+      exPending = null;
+      box.innerHTML = `<p class="status-line error">${escapeHtml(err.message)}</p>`;
+    }
+  });
+
+  $('#exPreview').addEventListener('click', (e) => {
+    if (!e.target.closest('#btnExAdd') || !exPending || !exPending.length) return;
+    const now = Date.now();
+    const added = exPending.map((t) => ({ ...t, updatedAt: now }));
+    if (state.sample) { state.trades = []; state.sample = false; resetView(); }
+    const ids = new Set(state.trades.map((t) => t.id));
+    for (const t of added) if (!ids.has(t.id)) { state.trades.push(t); delete state.deleted[t.id]; }
+    exPending = null;
+    commit();
+    render();
+    dataDialog.close();
+    $('#exPreview').innerHTML = '';
+    toast(`Добавлено сделок с биржи: ${added.length}`);
+  });
 
   // ---------- Screenshots ----------
 

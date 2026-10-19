@@ -150,6 +150,57 @@ await step('risk: balance, position size by stop and daily loss limit', async ()
   assert.match(await page.textContent('#account'), /9\s750,00/);
 });
 
+const fixture = (name) => path.join(root, 'tests', 'fixtures', name);
+
+async function importExchange(page, file) {
+  await page.click('#btnData');
+  await page.setInputFiles('#exFile', fixture(file));
+  await page.waitForSelector('#exPreview p');
+  return page.textContent('#exPreview');
+}
+
+await step('exchange import: Bybit closed P&L keeps the exchange result and skips duplicates', async () => {
+  const page = await open({ width: 1280, height: 900 });
+  await page.click('#btnClearSample');
+  assert.match(await importExchange(page, 'bybit-closed-pnl.csv'), /Bybit.*Новых сделок: 3/s);
+  await page.click('#btnExAdd');
+  assert.equal(await page.locator('#rows tr').count(), 3);
+  const stats = await page.textContent('#stats');
+  assert.match(stats, /\+16,20/, 'net P&L equals the sum of Closed P&L (9.3125 + 23.5288 - 16.6418)');
+  const sides = await page.locator('#rows .pill.long, #rows .pill.short').allTextContents();
+  assert.deepEqual(sides.sort(), ['Long', 'Long', 'Short']);
+  assert.match(await importExchange(page, 'bybit-closed-pnl.csv'), /Новых сделок: 0.*уже есть в журнале: 3/s);
+});
+
+await step('exchange import: Binance futures fills are rebuilt into positions', async () => {
+  const page = await open({ width: 1280, height: 900 });
+  await page.click('#btnClearSample');
+  assert.match(await importExchange(page, 'binance-futures-trades.csv'), /Binance.*фьючерсы.*Новых сделок: 3.*открытых: 1/s);
+  await page.click('#btnExAdd');
+  const rows = (await page.locator('#rows tr').allTextContents()).map((r) => r.replace(/\s+/g, ' '));
+  const btc = rows.find((r) => r.includes('BTCUSDT') && r.includes('61 000'));
+  assert.ok(btc && btc.includes('60 250'), 'BTC long averages two buys at 60 250');
+  assert.ok(rows.some((r) => r.includes('ETHUSDT') && r.includes('Short')), 'ETH short from sell then buy');
+  assert.match(await page.textContent('#stats'), /\+7,60/, 'net = 2.806 + 4.794');
+});
+
+await step('exchange import: Binance spot skips sells without a matching buy', async () => {
+  const page = await open({ width: 1280, height: 900 });
+  await page.click('#btnClearSample');
+  const text = await importExchange(page, 'binance-spot-trades.csv');
+  assert.match(text, /спот.*Новых сделок: 1.*пропущено строк: 1/s);
+  await page.click('#btnExAdd');
+  assert.match(await page.textContent('#stats'), /\+19,42/, 'SOL: 20 gross minus 0.28 + 0.3 fees');
+});
+
+await step('exchange import: unknown format lists the columns it found', async () => {
+  const page = await open({ width: 1280, height: 900 });
+  await page.click('#btnData');
+  await page.setInputFiles('#exFile', { name: 'odd.csv', mimeType: 'text/csv', buffer: Buffer.from('Foo,Bar\n1,2\n') });
+  await page.waitForSelector('#exPreview p');
+  assert.match(await page.textContent('#exPreview'), /Нашлись колонки: Foo, Bar/);
+});
+
 await step('no script errors', async () => {
   assert.deepEqual(errors, []);
 });
