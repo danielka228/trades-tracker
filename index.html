@@ -232,6 +232,40 @@ td.note { max-width: 220px; overflow: hidden; text-overflow: ellipsis; color: va
 .empty strong { display: block; color: var(--fg); font-size: 16px; margin-bottom: 4px; }
 .table-foot { padding: 10px 16px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); }
 
+/* Screenshots */
+.shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+.shots:empty { display: none; }
+.shot { position: relative; aspect-ratio: 4 / 3; max-width: 100%; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--sunken); }
+.shot .open { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; }
+.shot img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.shot .remove {
+  position: absolute; top: 4px; right: 4px; display: grid; place-items: center; width: 24px; height: 24px;
+  border: 0; border-radius: 6px; background: rgba(10, 12, 18, .7); color: #fff; cursor: pointer; font-size: 12px;
+}
+.shot .missing { display: grid; place-items: center; height: 100%; padding: 6px; font-size: 11px; color: var(--muted); text-align: center; }
+.dropzone { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px; border: 1px dashed var(--line); border-radius: 8px; }
+.dropzone.over { border-color: var(--accent); background: var(--accent-soft); }
+.shot-badge {
+  display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 1px 5px;
+  border: 0; border-radius: 6px; background: none; color: var(--muted); font-size: 12px; cursor: zoom-in; vertical-align: 1px;
+}
+.shot-badge:hover { background: var(--surface); color: var(--fg); }
+.shot-badge svg { width: 14px; height: 14px; }
+#lightbox { width: min(1100px, calc(100vw - 24px)); }
+.lb-img { display: grid; place-items: center; min-height: 200px; border-radius: 8px; background: var(--sunken); }
+.lb-img img { display: block; max-width: 100%; max-height: calc(100dvh - 160px); }
+.lb-img p { margin: 0; padding: 24px; text-align: center; }
+
+/* Sync */
+.sync-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--line); }
+.sync-dot.ok { background: var(--profit); }
+.sync-dot.busy { background: var(--open); }
+.sync-dot.error { background: var(--loss); }
+.steps { display: flex; flex-direction: column; gap: 4px; margin: 0; padding-left: 20px; font-size: 14px; }
+.steps a, .dialog-body a { color: var(--accent); }
+.small-note { margin: 0; font-size: 13px; color: var(--muted); }
+.check { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+
 /* Dialogs */
 dialog {
   width: min(640px, calc(100vw - 24px)); max-height: calc(100dvh - 24px);
@@ -272,6 +306,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
 .form-error { margin: 0; color: var(--loss); font-size: 14px; }
 .data-text { width: 100%; min-height: 180px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); font: 12px/1.5 var(--font-mono); resize: vertical; }
 .status-line { font-size: 13px; color: var(--muted); margin: 0; min-height: 1.5em; }
+.status-line.error { color: var(--loss); }
 
 .toast {
   position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
@@ -301,6 +336,10 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
         <option value="EUR">EUR €</option>
         <option value="RUB">RUB ₽</option>
       </select>
+      <button type="button" class="btn" id="btnSync" title="Синхронизация не настроена">
+        <span class="sync-dot" id="syncDot"></span>
+        Синхронизация
+      </button>
       <button type="button" class="btn" id="btnData">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
         Импорт / экспорт
@@ -483,6 +522,15 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
         <label for="tNotes">Заметки</label>
         <textarea id="tNotes" name="notes" placeholder="Почему вошёл, что пошло не так, эмоции"></textarea>
       </div>
+      <div class="field full">
+        <span class="label">Скриншоты графика</span>
+        <div class="shots" id="formShots"></div>
+        <div class="dropzone" id="dropzone">
+          <label class="btn" for="shotInput" style="cursor:pointer">Добавить скриншот…</label>
+          <input type="file" id="shotInput" accept="image/*" multiple hidden>
+          <span class="hint">или перетащите картинку сюда, или вставьте из буфера (Ctrl+V)</span>
+        </div>
+      </div>
     </div>
     <div class="preview" id="tradePreview" aria-live="polite"></div>
     <p class="form-error" id="formError" hidden></p>
@@ -509,8 +557,9 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
       <button type="button" class="btn" id="btnDownloadCsv">Скачать CSV</button>
       <button type="button" class="btn" id="btnCopyJson">Скопировать JSON</button>
     </div>
+    <label class="check"><input type="checkbox" id="withImages" checked> Сохранять скриншоты в JSON-файл</label>
     <div class="field">
-      <label for="dataText">Резервная копия (JSON или CSV). Вставьте сюда текст или выберите файл, чтобы загрузить сделки.</label>
+      <label for="dataText">Резервная копия (JSON или CSV). Вставьте сюда текст или выберите файл, чтобы загрузить сделки. В этом поле скриншотов нет: они попадают только в JSON-файл.</label>
       <textarea id="dataText" class="data-text" spellcheck="false"></textarea>
     </div>
     <div class="dialog-foot" style="justify-content:flex-start">
@@ -536,6 +585,64 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
   </div>
 </dialog>
 
+<!-- Sync -->
+<dialog id="syncDialog" aria-labelledby="syncTitle">
+  <div class="dialog-body">
+    <div class="dialog-head">
+      <h2 id="syncTitle">Синхронизация</h2>
+      <button type="button" class="icon-btn" data-close aria-label="Закрыть">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <p style="margin:0;font-size:14px">Журнал хранится в приватном GitHub Gist вашего аккаунта. Подключите один и тот же токен на компьютере и телефоне, и сделки будут объединяться автоматически после каждого изменения.</p>
+    <div id="syncSetup" class="dialog-body" style="padding:0">
+      <ol class="steps">
+        <li>Откройте <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">github.com/settings/personal-access-tokens/new</a> (нужен аккаунт GitHub).</li>
+        <li>В правах аккаунта (Account permissions) добавьте <b>Gists</b> с доступом <b>Read and write</b>. Другие права не нужны.</li>
+        <li>Создайте токен, скопируйте его и вставьте ниже. На втором устройстве вставьте тот же токен.</li>
+      </ol>
+      <div class="field">
+        <label for="syncToken">Токен GitHub</label>
+        <input id="syncToken" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…">
+      </div>
+      <div class="dialog-foot">
+        <button type="button" class="btn primary" id="btnSyncConnect">Подключить</button>
+      </div>
+    </div>
+    <div id="syncConnected" class="dialog-body" style="padding:0" hidden>
+      <p style="margin:0;font-size:14px">Подключено. Журнал лежит в gist <a id="syncGistLink" href="https://gist.github.com/" target="_blank" rel="noopener"></a>.</p>
+      <div class="dialog-foot">
+        <button type="button" class="btn danger spacer" id="btnSyncDisconnect">Отключить на этом устройстве</button>
+        <button type="button" class="btn primary" id="btnSyncNow">Синхронизировать сейчас</button>
+      </div>
+    </div>
+    <p class="status-line" id="syncStatus" aria-live="polite"></p>
+    <p class="small-note">Скриншоты не синхронизируются и остаются на устройстве, где их добавили. Перенести их можно JSON-файлом из «Импорт / экспорт».</p>
+    <p class="small-note">Токен хранится только в этом браузере. Давайте ему доступ лишь к Gists: на github.io все ваши сайты делят одно хранилище браузера.</p>
+  </div>
+</dialog>
+
+<!-- Screenshot viewer -->
+<dialog id="lightbox" aria-labelledby="lbTitle">
+  <div class="dialog-body">
+    <div class="dialog-head">
+      <h2 id="lbTitle" style="font-size:15px"></h2>
+      <div class="actions">
+        <button type="button" class="icon-btn" id="lbPrev" aria-label="Предыдущий скриншот">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></svg>
+        </button>
+        <button type="button" class="icon-btn" id="lbNext" aria-label="Следующий скриншот">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+        </button>
+        <button type="button" class="icon-btn" data-close aria-label="Закрыть">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="lb-img" id="lbBox"></div>
+  </div>
+</dialog>
+
 <div class="toast" id="toast" role="status" hidden></div>
 
 <script>
@@ -556,14 +663,20 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed && Array.isArray(parsed.trades)) return parsed;
+        if (parsed && Array.isArray(parsed.trades)) return { deleted: {}, currencyAt: 0, ...parsed };
       }
     } catch (e) { /* storage unavailable or corrupted: fall through to sample data */ }
-    return { trades: sampleTrades(), currency: 'USD', sample: true };
+    return { trades: sampleTrades(), currency: 'USD', currencyAt: 0, sample: true, deleted: {} };
   }
 
   function saveState() {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { /* storage unavailable */ }
+  }
+
+  // Every user change goes through here so the synced copy follows.
+  function commit() {
+    saveState();
+    scheduleSync();
   }
 
   // ---------- Helpers ----------
@@ -707,6 +820,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
   const state = loadState();
   const ui = { search: '', status: 'all', side: 'all', market: 'all', group: 'symbol', month: null, day: null };
   let editingId = null;
+  let formImages = [];
 
   // After the journal is replaced, jump the calendar to the newest data instead of a stale month.
   function resetView() { ui.month = null; ui.day = null; }
@@ -728,6 +842,8 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
       target: toNum(raw.target),
       setup: String(raw.setup || '').trim(),
       notes: String(raw.notes || '').trim(),
+      images: Array.isArray(raw.images) ? raw.images.map(String) : [],
+      updatedAt: Number(raw.updatedAt) || 0,
     };
     if (!t.symbol || t.entry === null || t.qty === null || !t.openedAt) return null;
     return t;
@@ -991,6 +1107,14 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
   const ICON_EDIT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16v4z"/></svg>';
   const ICON_DEL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>';
 
+  const ICON_IMG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 16 5-5 4 4 3-3 6 6"/></svg>';
+
+  function shotBadge(t) {
+    const n = (t.images || []).length;
+    if (!n) return '';
+    return `<button type="button" class="shot-badge" data-action="shots" aria-label="Скриншоты сделки ${escapeHtml(t.symbol)}: ${n}">${ICON_IMG}${n}</button>`;
+  }
+
   function renderTable(list) {
     const sorted = [...list].sort((a, b) => b.openedAt.localeCompare(a.openedAt));
     $('#rows').innerHTML = sorted.map((t) => {
@@ -998,7 +1122,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
       return `
       <tr data-id="${escapeHtml(t.id)}">
         <td class="num">${escapeHtml(fmtDate(t.openedAt))}${c.closed && t.closedAt ? `<span class="sub">→ ${escapeHtml(fmtDate(t.closedAt))}</span>` : ''}</td>
-        <td><span class="sym">${escapeHtml(t.symbol)}</span><span class="sub">${escapeHtml(t.market)}</span></td>
+        <td><span class="sym">${escapeHtml(t.symbol)}</span>${shotBadge(t)}<span class="sub">${escapeHtml(t.market)}</span></td>
         <td><span class="pill ${t.side}">${t.side === 'long' ? 'Long' : 'Short'}</span></td>
         <td class="r num">${nfPrice.format(t.entry)}</td>
         <td class="r num">${c.closed ? nfPrice.format(t.exit) : '<span class="pill open">Открыта</span>'}</td>
@@ -1036,6 +1160,8 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
   function openTradeForm(trade) {
     editingId = trade ? trade.id : null;
     form.reset();
+    formImages = trade ? [...(trade.images || [])] : [];
+    renderFormShots();
     $('#formError').hidden = true;
     $('#tradeDialogTitle').textContent = trade ? `Сделка ${trade.symbol}` : 'Новая сделка';
     $('#btnDeleteInForm').hidden = !trade;
@@ -1115,6 +1241,8 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     e.preventDefault();
     const t = readForm();
     if (t.exit !== null && !t.closedAt) t.closedAt = localIso(new Date());
+    t.images = [...formImages];
+    t.updatedAt = Date.now();
     const err = validate(t);
     if (err) {
       const el = $('#formError');
@@ -1136,9 +1264,10 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
       state.trades.push({ id: uid(), ...t });
       toast('Сделка добавлена');
     }
-    saveState();
+    commit();
     tradeDialog.close();
     render();
+    gcImages();
   });
 
   $('#btnDeleteInForm').addEventListener('click', () => {
@@ -1162,10 +1291,12 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
 
   $('#confirmOk').addEventListener('click', () => {
     state.trades = state.trades.filter((x) => x.id !== pendingDelete);
+    if (!state.sample) state.deleted[pendingDelete] = Date.now();
     pendingDelete = null;
-    saveState();
+    commit();
     confirmDialog.close();
     render();
+    gcImages();
     toast('Сделка удалена');
   });
 
@@ -1178,6 +1309,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     if (!t) return;
     const action = e.target.closest('[data-action]')?.dataset.action;
     if (action === 'delete') askDelete(t);
+    else if (action === 'shots') openLightbox(t.images, 0, t.symbol);
     else openTradeForm(t);
   });
 
@@ -1202,13 +1334,18 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     if (ui.day) $('.journal').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
   });
   $('#dayChip').addEventListener('click', () => { ui.day = null; render(); });
-  $('#currency').addEventListener('change', (e) => { state.currency = e.target.value; saveState(); render(); });
+  $('#currency').addEventListener('change', (e) => {
+    state.currency = e.target.value;
+    state.currencyAt = Date.now();
+    commit();
+    render();
+  });
   $('#btnAdd').addEventListener('click', () => openTradeForm(null));
   $('#btnClearSample').addEventListener('click', () => {
     state.trades = [];
     state.sample = false;
     resetView();
-    saveState();
+    commit();
     render();
     toast('Примеры удалены — журнал готов к работе');
   });
@@ -1267,10 +1404,12 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     const trimmed = text.trim();
     if (!trimmed) throw new Error('Вставьте текст резервной копии или выберите файл.');
     let rawList;
+    let images = {};
     if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
       let data;
       try { data = JSON.parse(trimmed); } catch (e) { throw new Error('Не удалось прочитать JSON: проверьте, что текст скопирован целиком.'); }
       rawList = Array.isArray(data) ? data : data.trades;
+      if (!Array.isArray(data) && data && data.images && typeof data.images === 'object') images = data.images;
       if (!Array.isArray(rawList)) throw new Error('В JSON нет списка сделок (ожидается поле "trades").');
     } else {
       rawList = parseCsv(trimmed);
@@ -1278,32 +1417,64 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     const trades = rawList.map(normalizeTrade).filter(Boolean);
     const skipped = rawList.length - trades.length;
     if (!trades.length) throw new Error('Не найдено ни одной корректной сделки. Нужны поля symbol, side, openedAt, entry и qty.');
-    return { trades, skipped };
+    return { trades, skipped, images };
   }
 
-  function doImport(mode) {
+  let pendingImport = null; // large files are kept here instead of the textarea
+
+  async function doImport(mode) {
     const status = $('#dataStatus');
     try {
-      const { trades, skipped } = parseImport($('#dataText').value);
+      const { trades, skipped, images } = parseImport(pendingImport ?? $('#dataText').value);
+      const now = Date.now();
+      let imageCount = 0;
+      for (const [id, url] of Object.entries(images)) {
+        const blob = dataUrlToBlob(url);
+        if (blob) { await imageStore.put(id, blob); imageCount++; }
+      }
       if (mode === 'replace' || state.sample) {
+        if (!state.sample) {
+          const keep = new Set(trades.map((t) => t.id));
+          for (const t of state.trades) if (!keep.has(t.id)) state.deleted[t.id] = now;
+        }
         state.trades = trades;
       } else {
         const ids = new Set(state.trades.map((t) => t.id));
         state.trades.push(...trades.map((t) => (ids.has(t.id) ? { ...t, id: uid() } : t)));
       }
+      for (const t of trades) { t.updatedAt = now; delete state.deleted[t.id]; }
       state.sample = false;
+      pendingImport = null;
       resetView();
-      saveState();
+      commit();
       render();
       dataDialog.close();
-      toast(`Загружено сделок: ${trades.length}${skipped ? `, пропущено: ${skipped}` : ''}`);
+      gcImages();
+      toast(`Загружено сделок: ${trades.length}${imageCount ? `, скриншотов: ${imageCount}` : ''}${skipped ? `, пропущено: ${skipped}` : ''}`);
     } catch (e) {
-      status.textContent = e.message;
-      status.style.color = 'var(--loss)';
+      setStatus(e.message, true);
     }
   }
 
-  function download(name, text, type) {
+  // Inside the claude.ai viewer, files go through its downloads capability; on a normal site, through a plain link.
+  let downloadsPromise = null;
+  function downloadsApi() {
+    if (!window.claude || typeof window.claude.use !== 'function') return Promise.resolve(null);
+    if (!downloadsPromise) downloadsPromise = window.claude.use('downloads').catch(() => null);
+    return downloadsPromise;
+  }
+
+  async function download(name, text, type) {
+    const api = await downloadsApi();
+    if (api) {
+      try {
+        await api.save({ filename: name, data: new Blob([text], { type }) });
+        setStatus(`Файл ${name} сохранён.`);
+      } catch (e) {
+        setStatus(e && e.code === 'declined' ? 'Сохранение отменено.' : 'Не получилось сохранить файл. Скопируйте текст из поля ниже.', e && e.code !== 'declined');
+      }
+      return;
+    }
     try {
       const blob = new Blob([text], { type });
       const a = document.createElement('a');
@@ -1315,33 +1486,51 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
       setStatus(`Файл ${name} сохранён. Если загрузка не началась, скопируйте текст из поля ниже.`);
     } catch (e) {
-      setStatus('Браузер не дал сохранить файл. Скопируйте текст из поля ниже.');
+      setStatus('Браузер не дал сохранить файл. Скопируйте текст из поля ниже.', true);
     }
   }
 
-  function setStatus(msg) {
+  async function exportJsonWithImages() {
+    const doc = JSON.parse(exportJson());
+    doc.images = {};
+    for (const id of new Set(state.trades.flatMap((t) => t.images || []))) {
+      const blob = await imageStore.get(id);
+      if (blob) doc.images[id] = await blobToDataUrl(blob);
+    }
+    return JSON.stringify(doc);
+  }
+
+  function setStatus(msg, isError = false) {
     const s = $('#dataStatus');
     s.textContent = msg;
-    s.style.color = '';
+    s.classList.toggle('error', isError);
   }
 
   const stamp = () => new Date().toISOString().slice(0, 10);
 
   $('#btnData').addEventListener('click', () => {
+    pendingImport = null;
     $('#dataText').value = exportJson();
     setStatus('');
     dataDialog.showModal();
   });
-  $('#btnDownloadJson').addEventListener('click', () => {
+  $('#dataText').addEventListener('input', () => { pendingImport = null; });
+  $('#btnDownloadJson').addEventListener('click', async () => {
+    pendingImport = null;
     $('#dataText').value = exportJson();
-    download(`trades-${stamp()}.json`, $('#dataText').value, 'application/json');
+    const withImages = $('#withImages').checked && state.trades.some((t) => (t.images || []).length);
+    if (withImages) setStatus('Собираю скриншоты…');
+    const text = withImages ? await exportJsonWithImages() : $('#dataText').value;
+    download(`trades-${stamp()}.json`, text, 'application/json');
   });
   $('#btnDownloadCsv').addEventListener('click', () => {
+    pendingImport = null;
     $('#dataText').value = exportCsv();
     download(`trades-${stamp()}.csv`, '﻿' + $('#dataText').value, 'text/csv;charset=utf-8');
   });
   $('#btnCopyJson').addEventListener('click', () => {
     const area = $('#dataText');
+    pendingImport = null;
     area.value = exportJson();
     const fallback = () => { area.focus(); area.select(); setStatus('Текст выделен — нажмите Ctrl+C (⌘C), чтобы скопировать.'); };
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -1353,15 +1542,445 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
-      $('#dataText').value = String(reader.result).replace(/^﻿/, '');
-      setStatus(`Файл «${file.name}» прочитан. Выберите, добавить сделки к журналу или заменить его.`);
+      const text = String(reader.result).replace(/^﻿/, '');
+      if (text.length > 200000) {
+        pendingImport = text;
+        $('#dataText').value = '';
+        setStatus(`Файл «${file.name}» прочитан (${nf1.format(text.length / 1048576)} МБ). Выберите, добавить сделки к журналу или заменить его.`);
+      } else {
+        pendingImport = null;
+        $('#dataText').value = text;
+        setStatus(`Файл «${file.name}» прочитан. Выберите, добавить сделки к журналу или заменить его.`);
+      }
     };
-    reader.onerror = () => setStatus('Не удалось прочитать файл.');
+    reader.onerror = () => setStatus('Не удалось прочитать файл.', true);
     reader.readAsText(file);
     e.target.value = '';
   });
   $('#btnImportAdd').addEventListener('click', () => doImport('add'));
   $('#btnImportReplace').addEventListener('click', () => doImport('replace'));
+
+  // ---------- Screenshots ----------
+
+  // Images live in IndexedDB (localStorage is too small); a Map keeps them for the session if IndexedDB is unavailable.
+  const imageStore = (() => {
+    const memory = new Map();
+    let dbPromise = null;
+    function open() {
+      if (!dbPromise) {
+        dbPromise = new Promise((resolve, reject) => {
+          const req = indexedDB.open('trades-tracker', 1);
+          req.onupgradeneeded = () => req.result.createObjectStore('images');
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        }).catch(() => null);
+      }
+      return dbPromise;
+    }
+    async function run(mode, op) {
+      const db = await open();
+      if (!db) return undefined;
+      return new Promise((resolve, reject) => {
+        const req = op(db.transaction('images', mode).objectStore('images'));
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+    return {
+      async put(id, blob) {
+        memory.set(id, blob);
+        try { await run('readwrite', (st) => st.put(blob, id)); } catch (e) { /* kept in memory only */ }
+      },
+      async get(id) {
+        if (memory.has(id)) return memory.get(id);
+        try {
+          const blob = await run('readonly', (st) => st.get(id));
+          if (blob) memory.set(id, blob);
+          return blob || null;
+        } catch (e) { return null; }
+      },
+      async del(id) {
+        memory.delete(id);
+        try { await run('readwrite', (st) => st.delete(id)); } catch (e) { /* nothing to delete */ }
+      },
+      async keys() {
+        let stored = [];
+        try { stored = (await run('readonly', (st) => st.getAllKeys())) || []; } catch (e) { /* memory only */ }
+        return [...new Set([...stored.map(String), ...memory.keys()])];
+      },
+    };
+  })();
+
+  const urlCache = new Map();
+  async function imageUrl(id) {
+    if (urlCache.has(id)) return urlCache.get(id);
+    const blob = await imageStore.get(id);
+    if (!blob) return null;
+    const url = URL.createObjectURL(blob);
+    urlCache.set(id, url);
+    return url;
+  }
+
+  // Drops screenshots no trade points to any more (removed in the form, deleted or replaced trades).
+  async function gcImages() {
+    const used = new Set(state.trades.flatMap((t) => t.images || []));
+    for (const id of await imageStore.keys()) {
+      if (used.has(id)) continue;
+      await imageStore.del(id);
+      if (urlCache.has(id)) { URL.revokeObjectURL(urlCache.get(id)); urlCache.delete(id); }
+    }
+  }
+
+  function loadImage(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('bad image'));
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+  // Screenshots are scaled to 1920px on the long side and re-encoded, which keeps a 4K PNG near a few hundred KB.
+  async function compressImage(file) {
+    const src = await loadImage(file);
+    const w0 = src.naturalWidth, h0 = src.naturalHeight;
+    const scale = Math.min(1, 1920 / Math.max(w0, h0));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(w0 * scale);
+    canvas.height = Math.round(h0 * scale);
+    canvas.getContext('2d').drawImage(src, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(src.src);
+    const encode = (type) => new Promise((resolve) => canvas.toBlob(resolve, type, 0.85));
+    let blob = await encode('image/webp');
+    if (!blob || blob.type !== 'image/webp') blob = await encode('image/jpeg');
+    if (!blob) throw new Error('encode failed');
+    return blob.size < file.size ? blob : file;
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(blob);
+    });
+  }
+
+  function dataUrlToBlob(url) {
+    const m = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=\s]+)$/.exec(String(url));
+    if (!m) return null;
+    try {
+      const bin = atob(m[2].replace(/\s/g, ''));
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new Blob([bytes], { type: m[1] });
+    } catch (e) { return null; }
+  }
+
+  function showFormError(msg) {
+    const el = $('#formError');
+    el.textContent = msg;
+    el.hidden = false;
+  }
+
+  async function addImages(fileList) {
+    const files = [...fileList].filter((f) => f.type.startsWith('image/'));
+    if (!files.length) { showFormError('Можно добавить только картинки: PNG, JPG или WebP.'); return; }
+    for (const f of files) {
+      try {
+        const blob = await compressImage(f);
+        const id = 'img_' + uid();
+        await imageStore.put(id, blob);
+        formImages.push(id);
+      } catch (e) {
+        showFormError(`Не удалось прочитать картинку «${f.name}».`);
+      }
+    }
+    renderFormShots();
+  }
+
+  function renderFormShots() {
+    const box = $('#formShots');
+    box.innerHTML = formImages.map((id, i) => `
+      <div class="shot" data-id="${escapeHtml(id)}">
+        <button type="button" class="open" data-index="${i}" aria-label="Открыть скриншот ${i + 1}"><span class="missing">Загрузка…</span></button>
+        <button type="button" class="remove" data-remove="${escapeHtml(id)}" aria-label="Убрать скриншот ${i + 1}">✕</button>
+      </div>`).join('');
+    box.querySelectorAll('.shot').forEach(async (el) => {
+      const url = await imageUrl(el.dataset.id);
+      const btn = el.querySelector('.open');
+      btn.innerHTML = url ? `<img src="${url}" alt="">` : '<span class="missing">Скриншот на другом устройстве</span>';
+    });
+  }
+
+  $('#formShots').addEventListener('click', (e) => {
+    const rm = e.target.closest('[data-remove]');
+    if (rm) {
+      formImages = formImages.filter((x) => x !== rm.dataset.remove);
+      renderFormShots();
+      return;
+    }
+    const open = e.target.closest('[data-index]');
+    if (open) openLightbox(formImages, Number(open.dataset.index), form.elements.symbol.value.trim().toUpperCase());
+  });
+  $('#shotInput').addEventListener('change', (e) => { addImages(e.target.files); e.target.value = ''; });
+  tradeDialog.addEventListener('paste', (e) => {
+    const files = [...((e.clipboardData && e.clipboardData.files) || [])].filter((f) => f.type.startsWith('image/'));
+    if (!files.length) return;
+    e.preventDefault();
+    addImages(files);
+  });
+  const dropzone = $('#dropzone');
+  const hasFiles = (e) => e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+  form.addEventListener('dragover', (e) => { if (!hasFiles(e)) return; e.preventDefault(); dropzone.classList.add('over'); });
+  form.addEventListener('dragleave', (e) => { if (!form.contains(e.relatedTarget)) dropzone.classList.remove('over'); });
+  form.addEventListener('drop', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dropzone.classList.remove('over');
+    addImages(e.dataTransfer.files);
+  });
+
+  // ---------- Screenshot viewer ----------
+
+  const lightbox = $('#lightbox');
+  let lb = { ids: [], i: 0, title: '' };
+
+  function openLightbox(ids, i, title) {
+    if (!ids || !ids.length) return;
+    lb = { ids: [...ids], i, title };
+    showLightboxImage();
+    if (!lightbox.open) lightbox.showModal();
+  }
+
+  async function showLightboxImage() {
+    const { ids, i, title } = lb;
+    $('#lbTitle').textContent = `${title ? `${title} · ` : ''}скриншот ${i + 1} из ${ids.length}`;
+    $('#lbPrev').hidden = $('#lbNext').hidden = ids.length < 2;
+    const url = await imageUrl(ids[i]);
+    if (lb.ids !== ids || lb.i !== i) return;
+    $('#lbBox').innerHTML = url
+      ? `<img src="${url}" alt="${escapeHtml(`Скриншот ${i + 1}${title ? ` по ${title}` : ''}`)}">`
+      : '<p class="muted">Этот скриншот добавлен на другом устройстве и здесь недоступен. Перенесите его JSON-файлом из «Импорт / экспорт».</p>';
+  }
+
+  function stepLightbox(d) {
+    lb.i = (lb.i + d + lb.ids.length) % lb.ids.length;
+    showLightboxImage();
+  }
+  $('#lbPrev').addEventListener('click', () => stepLightbox(-1));
+  $('#lbNext').addEventListener('click', () => stepLightbox(1));
+  lightbox.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft') stepLightbox(-1);
+    if (e.key === 'ArrowRight') stepLightbox(1);
+  });
+
+  // ---------- Sync (private GitHub Gist) ----------
+
+  const SYNC_KEY = 'trades-tracker:sync';
+  const GIST_FILE = 'trades-tracker.json';
+  const sync = (() => { try { return JSON.parse(localStorage.getItem(SYNC_KEY)) || {}; } catch (e) { return {}; } })();
+  const saveSync = () => { try { localStorage.setItem(SYNC_KEY, JSON.stringify(sync)); } catch (e) { /* storage unavailable */ } };
+
+  class SyncError extends Error {
+    constructor(message, status) { super(message); this.status = status; }
+  }
+
+  async function gh(path, opts = {}) {
+    let res;
+    try {
+      res = await fetch(`https://api.github.com${path}`, {
+        ...opts,
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${sync.token}`,
+          'X-GitHub-Api-Version': '2022-11-28',
+          ...(opts.body ? { 'Content-Type': 'application/json' } : {}),
+        },
+      });
+    } catch (e) {
+      throw new SyncError('Нет связи с GitHub. Проверьте интернет. В предпросмотре на claude.ai синхронизация не работает: откройте сайт по адресу GitHub Pages.');
+    }
+    if (res.status === 401) throw new SyncError('GitHub не принял токен: он неверный или истёк. Создайте новый и подключите его снова.', 401);
+    if (res.status === 403) throw new SyncError('GitHub отказал в доступе. Проверьте, что у токена есть право Gists: Read and write, или повторите через несколько минут.', 403);
+    if (res.status === 404) throw new SyncError('GitHub не нашёл gist. Проверьте, что у токена есть право Gists: Read and write.', 404);
+    if (!res.ok) throw new SyncError(`GitHub ответил ошибкой ${res.status}. Повторите позже.`, res.status);
+    return res.json();
+  }
+
+  function localDoc() {
+    return {
+      currency: state.currency,
+      currencyAt: state.currencyAt || 0,
+      trades: state.sample ? [] : state.trades,
+      deleted: state.deleted || {},
+    };
+  }
+
+  function signature(d) {
+    const trades = d.trades.map((t) => `${t.id}@${t.updatedAt || 0}`).sort();
+    const deleted = Object.entries(d.deleted).map(([id, ts]) => `${id}@${ts}`).sort();
+    return JSON.stringify([d.currency, d.currencyAt || 0, trades, deleted]);
+  }
+
+  // Per trade, the latest edit wins; a deletion wins over any edit made before it.
+  function mergeDocs(a, b) {
+    const deleted = { ...a.deleted };
+    for (const [id, ts] of Object.entries(b.deleted)) deleted[id] = Math.max(deleted[id] || 0, Number(ts) || 0);
+    const byId = new Map();
+    for (const t of [...a.trades, ...b.trades]) {
+      const cur = byId.get(t.id);
+      if (!cur || (t.updatedAt || 0) > (cur.updatedAt || 0)) byId.set(t.id, t);
+    }
+    const trades = [...byId.values()].filter((t) => !(deleted[t.id] >= (t.updatedAt || 0)));
+    const cur = (b.currencyAt || 0) > (a.currencyAt || 0) ? b : a;
+    return { currency: cur.currency, currencyAt: cur.currencyAt || 0, trades, deleted };
+  }
+
+  function applyDoc(d) {
+    if (signature(d) === signature(localDoc())) return;
+    state.deleted = d.deleted;
+    state.currency = CURRENCY_SIGNS[d.currency] ? d.currency : state.currency;
+    state.currencyAt = d.currencyAt;
+    if (!state.sample || d.trades.length) {
+      if (state.sample) resetView();
+      state.trades = d.trades;
+      state.sample = false;
+    }
+    saveState();
+    render();
+  }
+
+  async function pullGist() {
+    const g = await gh(`/gists/${encodeURIComponent(sync.gistId)}`);
+    const f = g.files && g.files[GIST_FILE];
+    if (!f) return null;
+    let text = f.content;
+    if (f.truncated) {
+      const r = await fetch(f.raw_url).catch(() => null);
+      if (!r || !r.ok) throw new SyncError('Не удалось скачать журнал из gist. Повторите позже.');
+      text = await r.text();
+    }
+    let d;
+    try { d = JSON.parse(text); } catch (e) { throw new SyncError('Файл журнала в gist повреждён. Исправьте или удалите его на gist.github.com.'); }
+    return {
+      currency: d.currency || 'USD',
+      currencyAt: Number(d.currencyAt) || 0,
+      trades: (Array.isArray(d.trades) ? d.trades : []).map(normalizeTrade).filter(Boolean),
+      deleted: d.deleted && typeof d.deleted === 'object' ? d.deleted : {},
+    };
+  }
+
+  async function findGist() {
+    for (let page = 1; page <= 10; page++) {
+      const list = await gh(`/gists?per_page=100&page=${page}`);
+      const hit = list.find((g) => g.files && g.files[GIST_FILE]);
+      if (hit) return hit.id;
+      if (list.length < 100) break;
+    }
+    return null;
+  }
+
+  async function runSync() {
+    setSyncStatus('busy', 'Синхронизация…');
+    try {
+      let remote = null;
+      if (sync.gistId) {
+        try { remote = await pullGist(); } catch (e) { if (e.status === 404) sync.gistId = null; else throw e; }
+      }
+      if (!sync.gistId) {
+        sync.gistId = await findGist();
+        if (sync.gistId) remote = await pullGist();
+      }
+      applyDoc(remote ? mergeDocs(localDoc(), remote) : localDoc());
+      const out = localDoc();
+      const body = { files: { [GIST_FILE]: { content: JSON.stringify({ app: 'trades-tracker', version: 1, ...out }) } } };
+      if (!sync.gistId) {
+        const g = await gh('/gists', { method: 'POST', body: JSON.stringify({ description: 'Trades Tracker: журнал сделок', public: false, ...body }) });
+        sync.gistId = g.id;
+      } else if (!remote || signature(out) !== signature(remote)) {
+        await gh(`/gists/${encodeURIComponent(sync.gistId)}`, { method: 'PATCH', body: JSON.stringify(body) });
+      }
+      sync.lastSync = Date.now();
+      sync.error = '';
+      saveSync();
+      setSyncStatus('ok');
+      return true;
+    } catch (e) {
+      sync.error = e instanceof SyncError ? e.message : `Не удалось синхронизировать: ${e.message}`;
+      saveSync();
+      setSyncStatus('error');
+      return false;
+    }
+  }
+
+  let syncRunning = null, syncQueued = false, syncTimer = null;
+  function syncNow() {
+    if (!sync.token) return Promise.resolve(false);
+    if (syncRunning) { syncQueued = true; return syncRunning; }
+    syncRunning = runSync().finally(() => {
+      syncRunning = null;
+      if (syncQueued) { syncQueued = false; syncNow(); }
+    });
+    return syncRunning;
+  }
+
+  function scheduleSync() {
+    if (!sync.token) return;
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(syncNow, 1500);
+  }
+
+  function syncSummary() {
+    if (!sync.token) return 'Синхронизация не настроена.';
+    if (sync.error) return sync.error;
+    return sync.lastSync ? `Синхронизировано ${fmtDate(localIso(new Date(sync.lastSync)))}.` : 'Подключено.';
+  }
+
+  function setSyncStatus(kind, text) {
+    const msg = text || syncSummary();
+    $('#syncDot').className = `sync-dot${sync.token ? ` ${kind}` : ''}`;
+    $('#btnSync').title = msg;
+    const line = $('#syncStatus');
+    line.textContent = msg;
+    line.classList.toggle('error', kind === 'error');
+    $('#syncSetup').hidden = !!sync.token;
+    $('#syncConnected').hidden = !sync.token;
+    const link = $('#syncGistLink');
+    link.textContent = sync.gistId ? sync.gistId.slice(0, 8) + '…' : '(создаётся)';
+    link.href = sync.gistId ? `https://gist.github.com/${encodeURIComponent(sync.gistId)}` : 'https://gist.github.com/';
+  }
+
+  $('#btnSync').addEventListener('click', () => {
+    setSyncStatus(sync.token ? (sync.error ? 'error' : 'ok') : 'off');
+    $('#syncDialog').showModal();
+  });
+  $('#btnSyncConnect').addEventListener('click', async () => {
+    const token = $('#syncToken').value.trim();
+    if (!token) { setSyncStatus('error', 'Вставьте токен GitHub.'); return; }
+    Object.assign(sync, { token, gistId: null, lastSync: 0, error: '' });
+    $('#btnSyncConnect').disabled = true;
+    const ok = await syncNow();
+    $('#btnSyncConnect').disabled = false;
+    if (!ok) {
+      const msg = sync.error;
+      Object.assign(sync, { token: '', gistId: null, error: '' });
+      saveSync();
+      setSyncStatus('error', msg);
+      return;
+    }
+    $('#syncToken').value = '';
+    toast('Синхронизация подключена');
+  });
+  $('#btnSyncNow').addEventListener('click', () => syncNow());
+  $('#btnSyncDisconnect').addEventListener('click', () => {
+    Object.assign(sync, { token: '', gistId: null, lastSync: 0, error: '' });
+    saveSync();
+    setSyncStatus('off', 'Отключено. Журнал остался на этом устройстве и в gist.');
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && sync.token && Date.now() - (sync.lastSync || 0) > 20000) syncNow();
+  });
 
   // ---------- Toast ----------
 
@@ -1375,6 +1994,9 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
   }
 
   render();
+  setSyncStatus(sync.error ? 'error' : 'ok');
+  gcImages();
+  if (sync.token) syncNow();
 })();
 </script>
 </body>
