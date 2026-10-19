@@ -25,8 +25,6 @@
 
 Подключить один раз: Cloudflare → **Workers & Pages** → **Create** → **Import a repository** → `trades-tracker`, команда сборки `npm run build`, команда деплоя `npx wrangler deploy`.
 
-Запасной вариант: workflow **Deploy site** выкладывает тот же сайт на GitHub Pages (<https://danielka228.github.io/trades-tracker/>), если в **Settings → Pages** выбран источник **GitHub Actions**.
-
 ## Как вносятся изменения
 
 1. Изменения приходят pull request'ом в `main`.
