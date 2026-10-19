@@ -344,6 +344,11 @@ td .tags.good { color: var(--profit); }
 .tag-link { padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 500; text-align: left; cursor: pointer; }
 .tag-link:hover { text-decoration: underline; }
 
+/* Partial exits */
+.exits { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 14px; }
+.exits li { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 8px; background: var(--sunken); }
+.exits li span:first-child { flex: 1 1 auto; min-width: 0; }
+
 /* Live prices */
 .live { font-style: italic; }
 td .live-sub { display: block; font-size: 12px; color: var(--muted); font-style: normal; }
@@ -617,9 +622,15 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
         <label for="tFees">Комиссии</label>
         <input id="tFees" name="fees" type="number" step="any" min="0" inputmode="decimal" placeholder="0">
       </div>
+      <div class="field full" id="exitsField" hidden>
+        <span class="label">Частичные выходы</span>
+        <ul class="exits" id="formExits"></ul>
+        <span class="hint">Цена и дата выхода складываются из частей. Новую часть добавляет кнопка «Закрыть» в таблице.</span>
+      </div>
       <div class="field">
         <label for="tStop">Стоп-лосс</label>
         <input id="tStop" name="stop" type="number" step="any" min="0" inputmode="decimal">
+        <span class="hint" id="initialStopHint" hidden></span>
       </div>
       <div class="field">
         <label for="tTarget">Тейк-профит</label>
@@ -770,17 +781,23 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
         <input id="cClosedAt" type="datetime-local" required>
       </div>
       <div class="field">
+        <label for="cQty">Сколько закрыть</label>
+        <input id="cQty" type="number" step="any" min="0" inputmode="decimal">
+        <span class="hint" id="cQtyHint"></span>
+      </div>
+      <div class="field">
         <label for="cFees">Комиссии</label>
         <input id="cFees" type="number" step="any" min="0" inputmode="decimal" placeholder="0">
-        <span class="hint">За вход и выход вместе</span>
+        <span class="hint">Всего по сделке, за вход и все выходы</span>
       </div>
     </div>
     <div class="quick-fill" id="closeQuick"></div>
     <div class="preview" id="closePreview" aria-live="polite"></div>
     <p class="form-error" id="closeError" hidden></p>
     <div class="dialog-foot">
+      <button type="button" class="btn spacer" id="btnBreakeven">Стоп в безубыток</button>
       <button type="button" class="btn" data-close>Отмена</button>
-      <button type="submit" class="btn primary">Закрыть позицию</button>
+      <button type="submit" class="btn primary" id="closeSubmit">Закрыть позицию</button>
     </div>
   </form>
 </dialog>
@@ -952,10 +969,32 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     const cost = t.entry * t.qty;
     const pnl = closed ? (t.exit - t.entry) * t.qty * dir - fees : null;
     const ret = closed && cost ? (pnl / cost) * 100 : null;
-    const risk = t.stop ? Math.abs(t.entry - t.stop) * t.qty : null;
+    // R is measured against the stop the trade was opened with, so moving it to breakeven keeps the risk.
+    const stop = t.initialStop ?? t.stop;
+    const risk = stop ? Math.abs(t.entry - stop) * t.qty : null;
     const reward = t.target ? Math.abs(t.target - t.entry) * t.qty : null;
     const r = closed && risk ? pnl / risk : null;
-    return { closed, pnl, ret, risk, reward, r, cost };
+    const parts = exitsOf(t);
+    const partQty = closed ? 0 : parts.reduce((a, x) => a + x.qty, 0);
+    const partPnl = closed ? 0 : parts.reduce((a, x) => a + (x.price - t.entry) * x.qty * dir, 0);
+    return { closed, pnl, ret, risk, reward, r, cost, partQty, partPnl, remaining: closed ? 0 : Math.max(0, t.qty - partQty) };
+  }
+
+  const exitsOf = (t) => (Array.isArray(t.exits) ? t.exits : []);
+
+  // Once the parts cover the whole size, the trade closes at their average price and the time of the last part.
+  function applyExits(t) {
+    const parts = exitsOf(t);
+    if (!parts.length) return t;
+    const q = parts.reduce((a, x) => a + x.qty, 0);
+    if (q >= t.qty * (1 - 1e-9)) {
+      t.exit = +(parts.reduce((a, x) => a + x.price * x.qty, 0) / q).toPrecision(12);
+      t.closedAt = parts.map((x) => x.at).sort().pop();
+    } else {
+      t.exit = null;
+      t.closedAt = '';
+    }
+    return t;
   }
 
   function closeTime(t) { return t.closedAt || t.openedAt; }
@@ -1072,6 +1111,10 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
       notes: String(raw.notes || '').trim(),
       images: Array.isArray(raw.images) ? raw.images.map(String) : [],
       tags: normalizeTags(raw.tags),
+      exits: (Array.isArray(raw.exits) ? raw.exits : [])
+        .map((x) => ({ price: toNum(x && x.price), qty: toNum(x && x.qty), at: String((x && x.at) || '').trim() }))
+        .filter((x) => x.price > 0 && x.qty > 0 && x.at),
+      initialStop: toNum(raw.initialStop),
       rating: [1, 2, 3, 4, 5].includes(Number(raw.rating)) ? Number(raw.rating) : null,
       updatedAt: Number(raw.updatedAt) || 0,
     };
@@ -1633,6 +1676,11 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     return `<button type="button" class="shot-badge" data-action="shots" aria-label="Скриншоты сделки ${escapeHtml(t.symbol)}: ${n}">${ICON_IMG}${n}</button>`;
   }
 
+  function partLine(t, c) {
+    if (!c.partQty) return '';
+    return `<span class="live-sub">закрыто ${nf1.format((c.partQty / t.qty) * 100)}% · зафиксировано <span class="${tone(c.partPnl)}">${escapeHtml(money(c.partPnl))}</span></span>`;
+  }
+
   function tagLine(t) {
     const tags = t.tags || [];
     if (!tags.length) return '';
@@ -1651,7 +1699,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
         <td><span class="sym">${escapeHtml(t.symbol)}</span>${shotBadge(t)}<span class="sub">${escapeHtml(t.market)}</span></td>
         <td><span class="pill ${t.side}">${t.side === 'long' ? 'Long' : 'Short'}</span></td>
         <td class="r num">${nfPrice.format(t.entry)}</td>
-        <td class="r num">${c.closed ? nfPrice.format(t.exit) : `<span class="pill open">Открыта</span>${liveLine(t, live)}`}</td>
+        <td class="r num">${c.closed ? nfPrice.format(t.exit) : `<span class="pill open">Открыта</span>${partLine(t, c)}${liveLine(t, live)}`}</td>
         <td class="r num">${nfQty.format(t.qty)}</td>
         <td class="r num ${tone(live ? live.pnl : c.pnl)}">${c.closed ? escapeHtml(money(c.pnl)) : live ? `<span class="live" title="Плавающий результат по цене Binance">≈ ${escapeHtml(money(live.pnl))}</span>` : '—'}</td>
         <td class="r num ${tone(live ? live.ret : c.ret)}">${c.closed || !live ? pct(c.ret) : `<span class="live">≈ ${pct(live.ret)}</span>`}</td>
@@ -1693,6 +1741,11 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     renderTagChips();
     $('#tTagNew').value = '';
     if (trade && trade.rating) form.elements.rating.value = String(trade.rating);
+    formExits = trade ? exitsOf(trade).map((x) => ({ ...x })) : [];
+    formInitialStop = trade ? trade.initialStop ?? null : null;
+    const hint = $('#initialStopHint');
+    hint.hidden = formInitialStop === null;
+    hint.textContent = formInitialStop === null ? '' : `Начальный стоп ${nfPrice.format(formInitialStop)}: от него считается R`;
     $('#formError').hidden = true;
     $('#tradeDialogTitle').textContent = trade ? `Сделка ${trade.symbol}` : 'Новая сделка';
     $('#btnDeleteInForm').hidden = !trade;
@@ -1703,6 +1756,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
       el.value = v === null || v === undefined ? '' : (key === 'fees' && v === 0 && !trade ? '' : v);
     }
     form.elements.side.value = t.side || 'long';
+    renderFormExits();
     updatePreview();
     tradeDialog.showModal();
     if (!trade) form.elements.symbol.focus();
@@ -1731,8 +1785,40 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
       notes: f.notes.value.trim(),
       tags: [...formTags],
       rating: f.rating.value ? Number(f.rating.value) : null,
+      exits: formExits.map((x) => ({ ...x })),
+      initialStop: formInitialStop,
     };
   }
+
+  // ---------- Partial exits in the form ----------
+
+  let formExits = [];
+  let formInitialStop = null;
+
+  function renderFormExits() {
+    const field = $('#exitsField');
+    const f = form.elements;
+    field.hidden = !formExits.length;
+    f.exit.disabled = f.closedAt.disabled = formExits.length > 0;
+    if (!formExits.length) return;
+    const draft = applyExits({ ...readForm(), exits: formExits });
+    f.exit.value = draft.exit ?? '';
+    f.closedAt.value = draft.closedAt || '';
+    const entry = toNum(f.entry.value) || 0, dir = f.side.value === 'short' ? -1 : 1;
+    $('#formExits').innerHTML = formExits.map((x, i) => `
+      <li><span>${escapeHtml(fmtDate(x.at))} · ${nfQty.format(x.qty)} по ${nfPrice.format(x.price)}</span>
+        <span class="num ${tone((x.price - entry) * dir)}">${escapeHtml(money((x.price - entry) * x.qty * dir))}</span>
+        <button type="button" class="icon-btn" data-remove-exit="${i}" aria-label="Убрать часть ${i + 1}">✕</button></li>`).join('');
+  }
+
+  $('#formExits').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-remove-exit]');
+    if (!b) return;
+    formExits.splice(Number(b.dataset.removeExit), 1);
+    if (!formExits.length) { form.elements.exit.value = ''; form.elements.closedAt.value = ''; }
+    renderFormExits();
+    updatePreview();
+  });
 
   // ---------- Tags ----------
 
@@ -1830,7 +1916,9 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     if (t.qty === null || t.qty <= 0) return 'Количество должно быть больше нуля.';
     if (t.closedAt && t.exit === null) return 'Указана дата выхода, но нет цены выхода. Заполните цену или очистите дату.';
     if (t.closedAt && t.closedAt < t.openedAt) return 'Дата выхода раньше даты входа.';
-    if (t.stop !== null && t.exit === null) {
+    if (exitsOf(t).reduce((a, x) => a + x.qty, 0) > t.qty * (1 + 1e-9)) return 'Частичные выходы больше объёма сделки. Увеличьте количество или уберите лишнюю часть.';
+    // A stop moved to breakeven or into profit is fine; only the original stop must sit on the losing side.
+    if (t.stop !== null && t.exit === null && t.initialStop === null) {
       const wrongSide = t.side === 'long' ? t.stop >= t.entry : t.stop <= t.entry;
       if (wrongSide) return t.side === 'long' ? 'Для Long стоп-лосс должен быть ниже цены входа.' : 'Для Short стоп-лосс должен быть выше цены входа.';
     }
@@ -1843,6 +1931,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     const t = readForm();
+    if (t.exits.length) applyExits(t);
     if (t.exit !== null && !t.closedAt) t.closedAt = localIso(new Date());
     t.images = [...formImages];
     t.updatedAt = Date.now();
@@ -1927,7 +2016,8 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     const price = livePrice(t);
     if (price === null) return null;
     const dir = t.side === 'short' ? -1 : 1;
-    const pnl = (price - t.entry) * t.qty * dir - (t.fees || 0);
+    const c = calc(t);
+    const pnl = (price - t.entry) * c.remaining * dir + c.partPnl - (t.fees || 0);
     const cost = t.entry * t.qty;
     return { price, pnl, ret: cost ? (pnl / cost) * 100 : null };
   }
@@ -2004,34 +2094,58 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     closingId = t.id;
     closeForm.reset();
     $('#closeError').hidden = true;
+    const c = calc(t);
     $('#closeInfo').textContent = `${t.side === 'long' ? 'Long' : 'Short'} ${t.symbol} · вход ${nfPrice.format(t.entry)} · объём ${nfQty.format(t.qty)}`;
     $('#cClosedAt').value = localIso(new Date());
     $('#cFees').value = t.fees || '';
+    $('#cQty').value = +c.remaining.toPrecision(12);
+    $('#cQtyHint').textContent = c.partQty ? `Осталось ${nfQty.format(c.remaining)} из ${nfQty.format(t.qty)}` : 'Меньше объёма — частичный выход';
     const market = livePrice(t);
     $('#closeQuick').innerHTML = (market ? `<button type="button" class="chip" data-price="${market}">По рынку ${nfPrice.format(market)}</button>` : '')
       + [['stop', 'По стопу'], ['target', 'По тейку']]
         .filter(([key]) => t[key])
         .map(([key, label]) => `<button type="button" class="chip" data-price="${t[key]}">${label} ${nfPrice.format(t[key])}</button>`)
         .join('');
+    $('#btnBreakeven').hidden = !t.stop || t.stop === t.entry;
     updateClosePreview();
     closeDialog.showModal();
     $('#cExit').focus();
   }
 
+  // The trade as it would be after this exit, and whether the exit closes it.
   function closingDraft() {
     const t = state.trades.find((x) => x.id === closingId);
     if (!t) return null;
-    return { ...t, exit: toNum($('#cExit').value), closedAt: $('#cClosedAt').value, fees: toNum($('#cFees').value) || 0 };
+    const price = toNum($('#cExit').value), qty = toNum($('#cQty').value), at = $('#cClosedAt').value;
+    const fees = toNum($('#cFees').value) || 0;
+    const c = calc(t);
+    const full = qty !== null && qty >= c.remaining * (1 - 1e-9);
+    const next = { ...t, fees };
+    if (price !== null && qty !== null) {
+      if (full && !exitsOf(t).length) { next.exit = price; next.closedAt = at; }
+      else { next.exits = [...exitsOf(t), { price, qty: full ? c.remaining : qty, at }]; applyExits(next); }
+    }
+    return { t, next, price, qty, at, full, remaining: c.remaining };
   }
 
   function updateClosePreview() {
     const d = closingDraft();
     const box = $('#closePreview');
-    if (!d || d.exit === null) {
+    if (!d) return;
+    $('#closeSubmit').textContent = d.full || d.qty === null ? 'Закрыть позицию' : 'Закрыть часть';
+    if (d.price === null || d.qty === null) {
       box.innerHTML = '<div><span>Результат</span>Введите цену выхода</div>';
       return;
     }
-    const c = calc(d);
+    if (!d.full) {
+      const dir = d.t.side === 'short' ? -1 : 1;
+      const part = (d.price - d.t.entry) * d.qty * dir;
+      box.innerHTML = `<div><span>Фиксируется</span><b class="${tone(part)}">${escapeHtml(money(part))}</b></div>`
+        + `<div><span>Закрыто будет</span><b>${nf1.format(((d.t.qty - d.remaining + d.qty) / d.t.qty) * 100)}%</b></div>`
+        + `<div><span>Останется</span><b>${nfQty.format(d.remaining - d.qty)}</b></div>`;
+      return;
+    }
+    const c = calc(d.next);
     box.innerHTML = `<div><span>Результат</span><b class="${tone(c.pnl)}">${escapeHtml(money(c.pnl))}</b></div>`
       + `<div><span>Доходность</span><b class="${tone(c.ret)}">${pct(c.ret)}</b></div>`
       + (c.r !== null ? `<div><span>В R</span><b class="${tone(c.r)}">${rmult(c.r)}</b></div>` : '');
@@ -2048,20 +2162,34 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     e.preventDefault();
     const d = closingDraft();
     if (!d) return;
-    const err = d.exit === null || d.exit <= 0 ? 'Укажите цену выхода больше нуля.'
-      : !d.closedAt ? 'Укажите дату выхода.'
-      : d.closedAt < d.openedAt ? 'Дата выхода раньше даты входа.' : null;
+    const err = d.price === null || d.price <= 0 ? 'Укажите цену выхода больше нуля.'
+      : d.qty === null || d.qty <= 0 ? 'Укажите, сколько закрыть.'
+      : d.qty > d.remaining * (1 + 1e-9) ? `Закрыть можно не больше ${nfQty.format(d.remaining)}.`
+      : !d.at ? 'Укажите дату выхода.'
+      : d.at < d.t.openedAt ? 'Дата выхода раньше даты входа.' : null;
     if (err) {
       $('#closeError').textContent = err;
       $('#closeError').hidden = false;
       return;
     }
     const i = state.trades.findIndex((x) => x.id === closingId);
-    state.trades[i] = { ...d, updatedAt: Date.now() };
+    state.trades[i] = { ...d.next, updatedAt: Date.now() };
     commit();
     closeDialog.close();
     render();
-    toast(`Позиция закрыта: ${money(calc(d).pnl)}`);
+    if (d.full) toast(`Позиция закрыта: ${money(calc(d.next).pnl)}`);
+    else toast(`Закрыта часть: ${nfQty.format(d.qty)}, осталось ${nfQty.format(d.remaining - d.qty)}`);
+  });
+
+  $('#btnBreakeven').addEventListener('click', () => {
+    const i = state.trades.findIndex((x) => x.id === closingId);
+    if (i < 0) return;
+    const t = state.trades[i];
+    state.trades[i] = { ...t, initialStop: t.initialStop ?? t.stop, stop: t.entry, updatedAt: Date.now() };
+    commit();
+    closeDialog.close();
+    render();
+    toast(`Стоп ${t.symbol} перенесён в безубыток: ${nfPrice.format(t.entry)}`);
   });
 
   // ---------- Table interactions ----------

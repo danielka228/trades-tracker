@@ -270,6 +270,52 @@ await step('live prices: open crypto positions show floating P&L, unknown ticker
   assert.ok(calls.some((c) => c.startsWith('fapi.binance.com')), 'falls back to futures');
 });
 
+await step('partial exits: two parts close a trade at the average price; breakeven keeps R', async () => {
+  const page = await open({ width: 1280, height: 900 });
+  await page.click('#btnClearSample');
+  await page.click('#btnAdd');
+  await page.fill('#tSymbol', 'eth');
+  await page.fill('#tEntry', '100');
+  await page.fill('#tQty', '10');
+  await page.fill('#tStop', '95');
+  await page.click('#tradeForm button[type=submit]');
+
+  // move the stop to breakeven: risk for R stays 5 * 10 = 50
+  await page.click('#rows [data-action=close]');
+  await page.click('#btnBreakeven');
+  await page.locator('#rows tr').first().locator('[data-action=edit]').click();
+  assert.equal(await page.inputValue('#tStop'), '100');
+  assert.match(await page.textContent('#initialStopHint'), /95/);
+  await page.click('#tradeForm button[type=submit]');
+  assert.ok(!(await page.locator('#formError').isVisible()), 'breakeven stop passes validation');
+
+  // first part: 4 at 110 -> +40 fixed, 40% closed
+  await page.click('#rows [data-action=close]');
+  await page.fill('#cExit', '110');
+  await page.fill('#cQty', '4');
+  assert.equal(await page.textContent('#closeSubmit'), 'Закрыть часть');
+  await page.click('#closeSubmit');
+  const row = page.locator('#rows tr').first();
+  assert.match((await row.textContent()).replace(/\s+/g, ' '), /закрыто 40,0% · зафиксировано \+40,00/);
+  assert.equal(await row.locator('.pill.open').count(), 1, 'still open');
+
+  // second part: the remaining 6 at 120 -> avg exit 116, P&L +160, R = 160 / 50 = 3.2
+  await page.click('#rows [data-action=close]');
+  assert.equal(await page.inputValue('#cQty'), '6');
+  await page.fill('#cExit', '120');
+  await page.click('#closeSubmit');
+  const text = (await row.textContent()).replace(/\s+/g, ' ');
+  assert.match(text, /116,00/);
+  assert.match(text, /\+160,00/);
+  assert.match(text, /\+3,20R/);
+
+  // the form lists both parts and keeps exit fields derived
+  await row.locator('[data-action=edit]').click();
+  assert.equal(await page.locator('#formExits li').count(), 2);
+  assert.ok(await page.isDisabled('#tExit'));
+  assert.equal(await page.inputValue('#tExit'), '116');
+});
+
 await step('no script errors', async () => {
   assert.deepEqual(errors, []);
 });
