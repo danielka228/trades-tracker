@@ -5,6 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Журнал сделок</title>
 <meta name="claude:viewport-fit-sides" content="cover">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161a23" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Сделки">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/favicon-64.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Unbounded:wght@500;600&display=swap">
@@ -265,6 +274,16 @@ td.note { max-width: 220px; overflow: hidden; text-overflow: ellipsis; color: va
 .steps a, .dialog-body a { color: var(--accent); }
 .small-note { margin: 0; font-size: 13px; color: var(--muted); }
 .check { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+
+/* Quick close */
+.btn-close-pos {
+  min-height: 28px; padding: 0 10px; margin-right: 4px;
+  border: 1px solid var(--accent); border-radius: 999px; background: var(--accent-soft); color: var(--fg);
+  font-size: 12px; font-weight: 500; cursor: pointer;
+}
+.btn-close-pos:hover { background: var(--accent); color: var(--accent-ink); }
+.quick-fill { display: flex; flex-wrap: wrap; gap: 8px; }
+.quick-fill:empty { display: none; }
 
 /* Dialogs */
 dialog {
@@ -571,6 +590,41 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     </div>
     <p class="status-line" id="dataStatus" aria-live="polite"></p>
   </div>
+</dialog>
+
+<!-- Quick close -->
+<dialog id="closeDialog" aria-labelledby="closeTitle">
+  <form id="closeForm" novalidate>
+    <div class="dialog-head">
+      <h2 id="closeTitle">Закрыть позицию</h2>
+      <button type="button" class="icon-btn" data-close aria-label="Закрыть окно">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <p class="muted" id="closeInfo" style="margin:0;font-size:14px"></p>
+    <div class="fields">
+      <div class="field">
+        <label for="cExit">Цена выхода</label>
+        <input id="cExit" type="number" step="any" min="0" inputmode="decimal" required>
+      </div>
+      <div class="field">
+        <label for="cClosedAt">Дата выхода</label>
+        <input id="cClosedAt" type="datetime-local" required>
+      </div>
+      <div class="field">
+        <label for="cFees">Комиссии</label>
+        <input id="cFees" type="number" step="any" min="0" inputmode="decimal" placeholder="0">
+        <span class="hint">За вход и выход вместе</span>
+      </div>
+    </div>
+    <div class="quick-fill" id="closeQuick"></div>
+    <div class="preview" id="closePreview" aria-live="polite"></div>
+    <p class="form-error" id="closeError" hidden></p>
+    <div class="dialog-foot">
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="submit" class="btn primary">Закрыть позицию</button>
+    </div>
+  </form>
 </dialog>
 
 <!-- Confirm -->
@@ -1133,6 +1187,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
         <td>${escapeHtml(t.setup) || '<span class="muted">—</span>'}</td>
         <td class="note" title="${escapeHtml(t.notes)}">${escapeHtml(t.notes)}</td>
         <td><div class="row-actions">
+          ${c.closed ? '' : `<button type="button" class="btn-close-pos" data-action="close" aria-label="Закрыть позицию ${escapeHtml(t.symbol)}">Закрыть</button>`}
           <button type="button" class="icon-btn" data-action="edit" aria-label="Изменить сделку ${escapeHtml(t.symbol)}">${ICON_EDIT}</button>
           <button type="button" class="icon-btn" data-action="delete" aria-label="Удалить сделку ${escapeHtml(t.symbol)}">${ICON_DEL}</button>
         </div></td>
@@ -1300,6 +1355,74 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     toast('Сделка удалена');
   });
 
+  // ---------- Quick close ----------
+
+  const closeDialog = $('#closeDialog');
+  const closeForm = $('#closeForm');
+  let closingId = null;
+
+  function openCloseDialog(t) {
+    closingId = t.id;
+    closeForm.reset();
+    $('#closeError').hidden = true;
+    $('#closeInfo').textContent = `${t.side === 'long' ? 'Long' : 'Short'} ${t.symbol} · вход ${nfPrice.format(t.entry)} · объём ${nfQty.format(t.qty)}`;
+    $('#cClosedAt').value = localIso(new Date());
+    $('#cFees').value = t.fees || '';
+    $('#closeQuick').innerHTML = [['stop', 'По стопу'], ['target', 'По тейку']]
+      .filter(([key]) => t[key])
+      .map(([key, label]) => `<button type="button" class="chip" data-price="${t[key]}">${label} ${nfPrice.format(t[key])}</button>`)
+      .join('');
+    updateClosePreview();
+    closeDialog.showModal();
+    $('#cExit').focus();
+  }
+
+  function closingDraft() {
+    const t = state.trades.find((x) => x.id === closingId);
+    if (!t) return null;
+    return { ...t, exit: toNum($('#cExit').value), closedAt: $('#cClosedAt').value, fees: toNum($('#cFees').value) || 0 };
+  }
+
+  function updateClosePreview() {
+    const d = closingDraft();
+    const box = $('#closePreview');
+    if (!d || d.exit === null) {
+      box.innerHTML = '<div><span>Результат</span>Введите цену выхода</div>';
+      return;
+    }
+    const c = calc(d);
+    box.innerHTML = `<div><span>Результат</span><b class="${tone(c.pnl)}">${escapeHtml(money(c.pnl))}</b></div>`
+      + `<div><span>Доходность</span><b class="${tone(c.ret)}">${pct(c.ret)}</b></div>`
+      + (c.r !== null ? `<div><span>В R</span><b class="${tone(c.r)}">${rmult(c.r)}</b></div>` : '');
+  }
+
+  closeForm.addEventListener('input', updateClosePreview);
+  $('#closeQuick').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-price]');
+    if (!b) return;
+    $('#cExit').value = b.dataset.price;
+    updateClosePreview();
+  });
+  closeForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const d = closingDraft();
+    if (!d) return;
+    const err = d.exit === null || d.exit <= 0 ? 'Укажите цену выхода больше нуля.'
+      : !d.closedAt ? 'Укажите дату выхода.'
+      : d.closedAt < d.openedAt ? 'Дата выхода раньше даты входа.' : null;
+    if (err) {
+      $('#closeError').textContent = err;
+      $('#closeError').hidden = false;
+      return;
+    }
+    const i = state.trades.findIndex((x) => x.id === closingId);
+    state.trades[i] = { ...d, updatedAt: Date.now() };
+    commit();
+    closeDialog.close();
+    render();
+    toast(`Позиция закрыта: ${money(calc(d).pnl)}`);
+  });
+
   // ---------- Table interactions ----------
 
   $('#rows').addEventListener('click', (e) => {
@@ -1309,6 +1432,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     if (!t) return;
     const action = e.target.closest('[data-action]')?.dataset.action;
     if (action === 'delete') askDelete(t);
+    else if (action === 'close') openCloseDialog(t);
     else if (action === 'shots') openLightbox(t.images, 0, t.symbol);
     else openTradeForm(t);
   });
@@ -1995,6 +2119,9 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
 
   render();
   setSyncStatus(sync.error ? 'error' : 'ok');
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+    navigator.serviceWorker.register('sw.js').catch(() => { /* offline mode is unavailable here */ });
+  }
   gcImages();
   if (sync.token) syncNow();
 })();

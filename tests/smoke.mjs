@@ -93,6 +93,27 @@ await step('delete: in-page confirmation removes the trade', async () => {
   assert.equal(await page.locator('#rows tr').count(), 11);
 });
 
+await step('quick close: open position closes by take-profit chip', async () => {
+  const page = await open({ width: 1280, height: 900 });
+  const openRows = page.locator('#rows tr', { has: page.locator('[data-action=close]') });
+  const before = await openRows.count();
+  assert.ok(before > 0, 'sample journal has open positions');
+  await openRows.first().locator('[data-action=close]').click();
+  await page.locator('#closeQuick .chip', { hasText: 'По тейку' }).click();
+  assert.match(await page.textContent('#closePreview'), /\+/);
+  await page.click('#closeForm button[type=submit]');
+  assert.equal(await openRows.count(), before - 1);
+  assert.match(await page.textContent('#toast'), /Позиция закрыта/);
+});
+
+await step('app manifest and icons are in place', async () => {
+  const fs = await import('node:fs');
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.webmanifest'), 'utf8'));
+  assert.equal(manifest.display, 'standalone');
+  for (const icon of manifest.icons) assert.ok(fs.existsSync(path.join(root, icon.src)), `${icon.src} exists`);
+  assert.ok(fs.existsSync(path.join(root, 'sw.js')));
+});
+
 await step('no script errors', async () => {
   assert.deepEqual(errors, []);
 });
