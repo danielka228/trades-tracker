@@ -1,0 +1,2003 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Журнал сделок</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Unbounded:wght@500;600&display=swap">
+<style>
+/* Layout: sticky toolbar → stat strip → equity chart + breakdown → journal table; one column on phones */
+:root {
+  --bg: #f3f5f8;
+  --surface: #ffffff;
+  --sunken: #e9edf3;
+  --fg: #141821;
+  --muted: #5b6475;
+  --line: #dbe0e8;
+  --accent: #2f4bd8;
+  --accent-ink: #ffffff;
+  --accent-soft: #e4e8fb;
+  --profit: #0f7f57;
+  --profit-soft: #dcf2e8;
+  --loss: #c42f3a;
+  --loss-soft: #f9e1e3;
+  --open: #9a6a00;
+  --open-soft: #f8edd2;
+  --shadow: 0 1px 2px rgba(20, 24, 33, .06), 0 8px 24px rgba(20, 24, 33, .06);
+  --font-display: "Unbounded", "Golos Text", system-ui, sans-serif;
+  --font-body: "Golos Text", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1117; --surface: #161a23; --sunken: #1d222d; --fg: #e5e8ef; --muted: #8b94a7; --line: #272d3a;
+    --accent: #8296ff; --accent-ink: #0e1117; --accent-soft: #1f2645;
+    --profit: #3fcf8e; --profit-soft: #13291f; --loss: #ff6f78; --loss-soft: #33171b; --open: #f0b93f; --open-soft: #2e2512;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .25);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1117; --surface: #161a23; --sunken: #1d222d; --fg: #e5e8ef; --muted: #8b94a7; --line: #272d3a;
+  --accent: #8296ff; --accent-ink: #0e1117; --accent-soft: #1f2645;
+  --profit: #3fcf8e; --profit-soft: #13291f; --loss: #ff6f78; --loss-soft: #33171b; --open: #f0b93f; --open-soft: #2e2512;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .25);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 var(--font-body);
+}
+body::before {
+  content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--surface);
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.pos { color: var(--profit); }
+.neg { color: var(--loss); }
+.muted { color: var(--muted); }
+
+.wrap {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+
+/* Toolbar */
+.top {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.top .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; padding-block: 12px; }
+.brand { display: flex; align-items: baseline; gap: 10px; margin-right: auto; }
+.brand h1 { margin: 0; font: 600 18px/1.2 var(--font-display); letter-spacing: -.01em; }
+.brand span { font-size: 13px; color: var(--muted); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 36px; padding: 0 14px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--surface); cursor: pointer; font-weight: 500; font-size: 14px;
+  transition: background .15s, border-color .15s;
+}
+.btn:hover { background: var(--sunken); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.danger { color: var(--loss); }
+.btn.danger.solid { background: var(--loss); color: #fff; border-color: var(--loss); }
+.btn.ghost { border-color: transparent; background: transparent; }
+.btn.ghost:hover { background: var(--sunken); }
+.btn svg { width: 16px; height: 16px; flex: none; }
+
+select.compact {
+  min-height: 36px; padding: 0 28px 0 10px; border: 1px solid var(--line); border-radius: 8px; background-color: var(--surface);
+}
+
+main.wrap { display: flex; flex-direction: column; gap: 20px; padding-block: 20px 48px; }
+
+/* Sample banner */
+.notice {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
+  padding: 12px 16px; border-radius: var(--radius);
+  background: var(--accent-soft); color: var(--fg); font-size: 14px;
+}
+.notice p { margin: 0; flex: 1 1 280px; }
+
+/* Stats strip */
+.stats {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  overflow: hidden;
+}
+.stat { padding: 14px 16px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); margin: 0 -1px -1px 0; min-width: 0; }
+.stat dt { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.stat dd { margin: 4px 0 0; font: 500 20px/1.25 var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat small { display: block; margin-top: 2px; font-size: 12px; color: var(--muted); }
+.stat.hero { grid-column: span 2; }
+.stat.hero dd { font-size: 26px; }
+.scope { font-size: 13px; color: var(--muted); margin: -8px 0 0; }
+
+/* Panels */
+.panels { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 860px) { .panels { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; min-width: 0; }
+.panel-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.panel h2 { margin: 0; font: 600 14px/1.3 var(--font-display); letter-spacing: .01em; }
+
+#equity { width: 100%; height: 240px; display: block; }
+#equity text { fill: var(--muted); font: 11px var(--font-mono); }
+#equity .grid { stroke: var(--line); stroke-width: 1; }
+#equity .zero { stroke: var(--muted); stroke-dasharray: 3 4; stroke-width: 1; }
+#equity .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
+#equity .area { fill: var(--accent); opacity: .12; }
+#equity .dot { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
+#equity .end-label { fill: var(--fg); font-weight: 500; }
+.empty-chart { display: grid; place-items: center; height: 240px; color: var(--muted); text-align: center; font-size: 14px; }
+
+.seg { display: inline-flex; padding: 2px; border-radius: 8px; background: var(--sunken); }
+.seg button { border: 0; background: transparent; padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--muted); }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+
+.breakdown { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.breakdown li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; font-size: 14px; }
+.breakdown .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.breakdown .meta { grid-column: 1; font-size: 12px; color: var(--muted); }
+.breakdown .val { grid-row: 1 / span 2; grid-column: 2; align-self: center; text-align: right; }
+.breakdown .bar { grid-column: 1 / -1; height: 4px; border-radius: 2px; background: var(--sunken); overflow: hidden; }
+.breakdown .bar i { display: block; height: 100%; border-radius: 2px; }
+.breakdown .bar i.pos { background: var(--profit); }
+.breakdown .bar i.neg { background: var(--loss); }
+
+/* Calendar */
+.cal-nav { display: flex; align-items: center; gap: 2px; }
+.cal-nav .month { min-width: 132px; text-align: center; font-weight: 600; }
+.cal-nav .month::first-letter { text-transform: uppercase; }
+.cal-total { font-size: 13px; color: var(--muted); margin-right: auto; }
+.cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)) minmax(0, 1fr); gap: 4px; }
+.cal .dow { padding: 0 6px 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.day {
+  display: flex; flex-direction: column; justify-content: space-between; gap: 2px;
+  min-width: 0; min-height: 70px; padding: 6px 8px;
+  border: 1px solid transparent; border-radius: 8px; background: var(--sunken); text-align: left;
+}
+.day.out { background: transparent; }
+.day.week { background: transparent; border: 1px dashed var(--line); }
+.day.win { background: var(--profit-soft); background: color-mix(in srgb, var(--profit) var(--a), var(--surface)); }
+.day.loss { background: var(--loss-soft); background: color-mix(in srgb, var(--loss) var(--a), var(--surface)); }
+button.day { cursor: pointer; }
+button.day:hover { border-color: var(--muted); }
+.day.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.day .d { font-size: 12px; color: var(--muted); }
+.day.today .d { color: var(--accent); font-weight: 600; }
+.day.win .d, .day.loss .d { color: var(--fg); }
+.day .p { font: 600 13px/1.2 var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.day.win .p, .day.loss .p { color: var(--fg); }
+.day .n { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.day.win .n, .day.loss .n { color: var(--fg); opacity: .75; }
+.cal-hint { margin: 10px 0 0; font-size: 13px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px;
+  border: 1px solid var(--accent); border-radius: 999px; background: var(--accent-soft); color: var(--fg); cursor: pointer; font-size: 14px;
+}
+.journal { scroll-margin-top: 80px; }
+@media (max-width: 560px) {
+  .cal { gap: 3px; }
+  .cal .dow { padding: 0 2px; font-size: 10px; letter-spacing: 0; }
+  .day { min-height: 50px; padding: 4px; }
+  .day .p { font-size: 10px; }
+  .day .n { display: none; }
+}
+
+/* Journal */
+.journal { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); min-width: 0; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.filters h2 { margin: 0 auto 0 0; font: 600 14px/1.3 var(--font-display); }
+.filters input[type="search"] {
+  min-height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); width: 180px; max-width: 100%;
+}
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { padding: 10px 12px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--line); }
+th { font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); background: var(--sunken); position: sticky; top: 0; }
+td.r, th.r { text-align: right; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--sunken); }
+tbody tr:last-child td { border-bottom: 0; }
+td .sym { font-weight: 600; }
+td .sub { display: block; font-size: 12px; color: var(--muted); }
+td.note { max-width: 220px; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500; }
+.pill.long { background: var(--profit-soft); color: var(--profit); }
+.pill.short { background: var(--loss-soft); color: var(--loss); }
+.pill.open { background: var(--open-soft); color: var(--open); }
+.row-actions { display: flex; gap: 2px; justify-content: flex-end; }
+.icon-btn { display: inline-grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 6px; background: transparent; cursor: pointer; color: var(--muted); }
+.icon-btn:hover { background: var(--surface); color: var(--fg); }
+.icon-btn svg { width: 16px; height: 16px; }
+.empty { padding: 40px 16px; text-align: center; color: var(--muted); }
+.empty strong { display: block; color: var(--fg); font-size: 16px; margin-bottom: 4px; }
+.table-foot { padding: 10px 16px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); }
+
+/* Screenshots */
+.shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+.shots:empty { display: none; }
+.shot { position: relative; aspect-ratio: 4 / 3; max-width: 100%; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--sunken); }
+.shot .open { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; }
+.shot img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.shot .remove {
+  position: absolute; top: 4px; right: 4px; display: grid; place-items: center; width: 24px; height: 24px;
+  border: 0; border-radius: 6px; background: rgba(10, 12, 18, .7); color: #fff; cursor: pointer; font-size: 12px;
+}
+.shot .missing { display: grid; place-items: center; height: 100%; padding: 6px; font-size: 11px; color: var(--muted); text-align: center; }
+.dropzone { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px; border: 1px dashed var(--line); border-radius: 8px; }
+.dropzone.over { border-color: var(--accent); background: var(--accent-soft); }
+.shot-badge {
+  display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 1px 5px;
+  border: 0; border-radius: 6px; background: none; color: var(--muted); font-size: 12px; cursor: zoom-in; vertical-align: 1px;
+}
+.shot-badge:hover { background: var(--surface); color: var(--fg); }
+.shot-badge svg { width: 14px; height: 14px; }
+#lightbox { width: min(1100px, calc(100vw - 24px)); }
+.lb-img { display: grid; place-items: center; min-height: 200px; border-radius: 8px; background: var(--sunken); }
+.lb-img img { display: block; max-width: 100%; max-height: calc(100dvh - 160px); }
+.lb-img p { margin: 0; padding: 24px; text-align: center; }
+
+/* Sync */
+.sync-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--line); }
+.sync-dot.ok { background: var(--profit); }
+.sync-dot.busy { background: var(--open); }
+.sync-dot.error { background: var(--loss); }
+.steps { display: flex; flex-direction: column; gap: 4px; margin: 0; padding-left: 20px; font-size: 14px; }
+.steps a, .dialog-body a { color: var(--accent); }
+.small-note { margin: 0; font-size: 13px; color: var(--muted); }
+.check { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+
+/* Dialogs */
+dialog {
+  width: min(640px, calc(100vw - 24px)); max-height: calc(100dvh - 24px);
+  padding: 0; border: 1px solid var(--line); border-radius: 14px;
+  background: var(--surface); color: var(--fg); box-shadow: var(--shadow);
+}
+dialog::backdrop { background: rgba(10, 12, 18, .45); }
+dialog form, .dialog-body { display: flex; flex-direction: column; gap: 16px; padding: 20px; }
+dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
+.dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.dialog-foot { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; align-items: center; }
+.dialog-foot .spacer { margin-right: auto; }
+.fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }
+.fields .full { grid-column: 1 / -1; }
+@media (max-width: 520px) { .fields { grid-template-columns: minmax(0, 1fr); } }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field label, .field .label { font-size: 13px; font-weight: 500; color: var(--muted); }
+.field input, .field select, .field textarea {
+  width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg);
+}
+.field textarea { min-height: 80px; resize: vertical; }
+.field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+.field .hint { font-size: 12px; color: var(--muted); }
+.side-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.side-toggle input { position: absolute; opacity: 0; pointer-events: none; }
+.side-toggle label {
+  display: grid; place-items: center; min-height: 40px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; font-weight: 600; color: var(--muted); background: var(--bg);
+}
+.side-toggle input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 2px; }
+.side-toggle input[value="long"]:checked + label { background: var(--profit-soft); color: var(--profit); border-color: var(--profit); }
+.side-toggle input[value="short"]:checked + label { background: var(--loss-soft); color: var(--loss); border-color: var(--loss); }
+.preview {
+  display: flex; flex-wrap: wrap; gap: 6px 20px; padding: 12px 14px; border-radius: 8px; background: var(--sunken); font-size: 13px;
+}
+.preview div { display: flex; flex-direction: column; }
+.preview span { color: var(--muted); font-size: 12px; }
+.preview b { font: 500 15px var(--font-mono); font-variant-numeric: tabular-nums; }
+.form-error { margin: 0; color: var(--loss); font-size: 14px; }
+.data-text { width: 100%; min-height: 180px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); font: 12px/1.5 var(--font-mono); resize: vertical; }
+.status-line { font-size: 13px; color: var(--muted); margin: 0; min-height: 1.5em; }
+.status-line.error { color: var(--loss); }
+
+.toast {
+  position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
+  padding: 10px 16px; border-radius: 8px; background: var(--fg); color: var(--bg); font-size: 14px; box-shadow: var(--shadow); z-index: 20;
+}
+
+@media (max-width: 560px) {
+  .brand span { display: none; }
+  .stat dd { font-size: 17px; }
+  .stat.hero dd { font-size: 21px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <h1>Журнал сделок</h1>
+      <span>учёт ордеров и статистика</span>
+    </div>
+    <div class="actions">
+      <select id="currency" class="compact" aria-label="Валюта счёта">
+        <option value="USD">USD $</option>
+        <option value="USDT">USDT</option>
+        <option value="EUR">EUR €</option>
+        <option value="RUB">RUB ₽</option>
+      </select>
+      <button type="button" class="btn" id="btnSync" title="Синхронизация не настроена">
+        <span class="sync-dot" id="syncDot"></span>
+        Синхронизация
+      </button>
+      <button type="button" class="btn" id="btnData">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+        Импорт / экспорт
+      </button>
+      <button type="button" class="btn primary" id="btnAdd">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        Новая сделка
+      </button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="notice" id="sampleNotice" hidden>
+    <p>Сейчас в журнале примерные сделки, чтобы было видно, как всё работает. Это не ваши данные.</p>
+    <button type="button" class="btn" id="btnClearSample">Удалить примеры и начать</button>
+  </div>
+
+  <dl class="stats" id="stats"></dl>
+  <p class="scope" id="scope" hidden></p>
+
+  <div class="panels">
+    <section class="panel" aria-labelledby="equityTitle">
+      <div class="panel-head">
+        <h2 id="equityTitle">Кривая доходности</h2>
+        <span class="muted" style="font-size:13px">накопленный P&amp;L по закрытым сделкам</span>
+      </div>
+      <div id="equityWrap"></div>
+    </section>
+    <section class="panel" aria-labelledby="breakdownTitle">
+      <div class="panel-head">
+        <h2 id="breakdownTitle">Результат</h2>
+        <div class="seg" role="group" aria-label="Группировка">
+          <button type="button" data-group="symbol" aria-pressed="true">По тикеру</button>
+          <button type="button" data-group="setup" aria-pressed="false">По сетапу</button>
+        </div>
+      </div>
+      <ul class="breakdown" id="breakdown"></ul>
+    </section>
+  </div>
+
+  <section class="panel" aria-labelledby="calTitle">
+    <div class="panel-head">
+      <h2 id="calTitle">Календарь P&amp;L</h2>
+      <span class="cal-total" id="calTotal"></span>
+      <div class="cal-nav">
+        <button type="button" class="icon-btn" id="calPrev" aria-label="Предыдущий месяц">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></svg>
+        </button>
+        <span class="month" id="calMonth" aria-live="polite"></span>
+        <button type="button" class="icon-btn" id="calNext" aria-label="Следующий месяц">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="cal" id="calendar"></div>
+    <p class="cal-hint muted">День считается по дате закрытия сделки. Нажмите на день, чтобы показать его сделки в таблице.</p>
+  </section>
+
+  <section class="journal" aria-labelledby="journalTitle">
+    <div class="filters">
+      <h2 id="journalTitle">Сделки</h2>
+      <button type="button" class="chip" id="dayChip" hidden></button>
+      <input type="search" id="fSearch" placeholder="Тикер, сетап, заметка" aria-label="Поиск">
+      <select id="fStatus" class="compact" aria-label="Статус">
+        <option value="all">Все</option>
+        <option value="open">Открытые</option>
+        <option value="closed">Закрытые</option>
+        <option value="win">Прибыльные</option>
+        <option value="loss">Убыточные</option>
+      </select>
+      <select id="fSide" class="compact" aria-label="Направление">
+        <option value="all">Long и Short</option>
+        <option value="long">Только Long</option>
+        <option value="short">Только Short</option>
+      </select>
+      <select id="fMarket" class="compact" aria-label="Рынок">
+        <option value="all">Все рынки</option>
+      </select>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Открыта</th>
+            <th>Инструмент</th>
+            <th>Напр.</th>
+            <th class="r">Вход</th>
+            <th class="r">Выход</th>
+            <th class="r">Объём</th>
+            <th class="r">P&amp;L</th>
+            <th class="r">%</th>
+            <th class="r">R</th>
+            <th>Сетап</th>
+            <th>Заметка</th>
+            <th><span hidden>Действия</span></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="empty" id="emptyState" hidden></div>
+    <div class="table-foot" id="tableFoot"></div>
+  </section>
+</main>
+
+<!-- Trade form -->
+<dialog id="tradeDialog" aria-labelledby="tradeDialogTitle">
+  <form id="tradeForm" novalidate>
+    <div class="dialog-head">
+      <h2 id="tradeDialogTitle">Новая сделка</h2>
+      <button type="button" class="icon-btn" data-close aria-label="Закрыть">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <div class="fields">
+      <div class="field">
+        <label for="tSymbol">Тикер</label>
+        <input id="tSymbol" name="symbol" required autocomplete="off" placeholder="BTCUSDT, AAPL, EURUSD" list="symbolList">
+        <datalist id="symbolList"></datalist>
+      </div>
+      <div class="field">
+        <label for="tMarket">Рынок</label>
+        <select id="tMarket" name="market">
+          <option>Крипто</option>
+          <option>Акции</option>
+          <option>Форекс</option>
+          <option>Фьючерсы</option>
+          <option>Опционы</option>
+          <option>Другое</option>
+        </select>
+      </div>
+      <div class="field full">
+        <span class="label" id="sideLabel">Направление</span>
+        <div class="side-toggle" role="radiogroup" aria-labelledby="sideLabel">
+          <input type="radio" id="tSideLong" name="side" value="long" checked><label for="tSideLong">Long ↑</label>
+          <input type="radio" id="tSideShort" name="side" value="short"><label for="tSideShort">Short ↓</label>
+        </div>
+      </div>
+      <div class="field">
+        <label for="tOpenedAt">Дата входа</label>
+        <input id="tOpenedAt" name="openedAt" type="datetime-local" required>
+      </div>
+      <div class="field">
+        <label for="tClosedAt">Дата выхода</label>
+        <input id="tClosedAt" name="closedAt" type="datetime-local">
+      </div>
+      <div class="field">
+        <label for="tEntry">Цена входа</label>
+        <input id="tEntry" name="entry" type="number" step="any" min="0" inputmode="decimal" required>
+      </div>
+      <div class="field">
+        <label for="tExit">Цена выхода</label>
+        <input id="tExit" name="exit" type="number" step="any" min="0" inputmode="decimal">
+        <span class="hint">Пусто, пока позиция открыта</span>
+      </div>
+      <div class="field">
+        <label for="tQty">Количество</label>
+        <input id="tQty" name="qty" type="number" step="any" min="0" inputmode="decimal" required>
+        <span class="hint">Монеты, акции, лоты или контракты</span>
+      </div>
+      <div class="field">
+        <label for="tFees">Комиссии</label>
+        <input id="tFees" name="fees" type="number" step="any" min="0" inputmode="decimal" placeholder="0">
+      </div>
+      <div class="field">
+        <label for="tStop">Стоп-лосс</label>
+        <input id="tStop" name="stop" type="number" step="any" min="0" inputmode="decimal">
+      </div>
+      <div class="field">
+        <label for="tTarget">Тейк-профит</label>
+        <input id="tTarget" name="target" type="number" step="any" min="0" inputmode="decimal">
+      </div>
+      <div class="field full">
+        <label for="tSetup">Сетап / стратегия</label>
+        <input id="tSetup" name="setup" autocomplete="off" placeholder="Пробой уровня, отскок от EMA…" list="setupList">
+        <datalist id="setupList"></datalist>
+      </div>
+      <div class="field full">
+        <label for="tNotes">Заметки</label>
+        <textarea id="tNotes" name="notes" placeholder="Почему вошёл, что пошло не так, эмоции"></textarea>
+      </div>
+      <div class="field full">
+        <span class="label">Скриншоты графика</span>
+        <div class="shots" id="formShots"></div>
+        <div class="dropzone" id="dropzone">
+          <label class="btn" for="shotInput" style="cursor:pointer">Добавить скриншот…</label>
+          <input type="file" id="shotInput" accept="image/*" multiple hidden>
+          <span class="hint">или перетащите картинку сюда, или вставьте из буфера (Ctrl+V)</span>
+        </div>
+      </div>
+    </div>
+    <div class="preview" id="tradePreview" aria-live="polite"></div>
+    <p class="form-error" id="formError" hidden></p>
+    <div class="dialog-foot">
+      <button type="button" class="btn danger spacer" id="btnDeleteInForm" hidden>Удалить</button>
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="submit" class="btn primary">Сохранить</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Import / export -->
+<dialog id="dataDialog" aria-labelledby="dataDialogTitle">
+  <div class="dialog-body">
+    <div class="dialog-head">
+      <h2 id="dataDialogTitle">Импорт и экспорт</h2>
+      <button type="button" class="icon-btn" data-close aria-label="Закрыть">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <p class="muted" style="margin:0;font-size:14px">Данные хранятся только в этом браузере. Сохраняйте резервную копию, чтобы не потерять журнал или перенести его на другое устройство.</p>
+    <div class="dialog-foot" style="justify-content:flex-start">
+      <button type="button" class="btn" id="btnDownloadJson">Скачать JSON</button>
+      <button type="button" class="btn" id="btnDownloadCsv">Скачать CSV</button>
+      <button type="button" class="btn" id="btnCopyJson">Скопировать JSON</button>
+    </div>
+    <label class="check"><input type="checkbox" id="withImages" checked> Сохранять скриншоты в JSON-файл</label>
+    <div class="field">
+      <label for="dataText">Резервная копия (JSON или CSV). Вставьте сюда текст или выберите файл, чтобы загрузить сделки. В этом поле скриншотов нет: они попадают только в JSON-файл.</label>
+      <textarea id="dataText" class="data-text" spellcheck="false"></textarea>
+    </div>
+    <div class="dialog-foot" style="justify-content:flex-start">
+      <label class="btn" for="importFile" style="cursor:pointer">Выбрать файл…</label>
+      <input type="file" id="importFile" accept=".json,.csv,application/json,text/csv" hidden>
+      <span class="spacer"></span>
+      <button type="button" class="btn" id="btnImportAdd">Добавить к журналу</button>
+      <button type="button" class="btn primary" id="btnImportReplace">Заменить журнал</button>
+    </div>
+    <p class="status-line" id="dataStatus" aria-live="polite"></p>
+  </div>
+</dialog>
+
+<!-- Confirm -->
+<dialog id="confirmDialog" aria-labelledby="confirmTitle">
+  <div class="dialog-body">
+    <h2 id="confirmTitle">Удалить сделку?</h2>
+    <p id="confirmText" style="margin:0"></p>
+    <div class="dialog-foot">
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="button" class="btn danger solid" id="confirmOk">Удалить</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Sync -->
+<dialog id="syncDialog" aria-labelledby="syncTitle">
+  <div class="dialog-body">
+    <div class="dialog-head">
+      <h2 id="syncTitle">Синхронизация</h2>
+      <button type="button" class="icon-btn" data-close aria-label="Закрыть">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <p style="margin:0;font-size:14px">Журнал хранится в приватном GitHub Gist вашего аккаунта. Подключите один и тот же токен на компьютере и телефоне, и сделки будут объединяться автоматически после каждого изменения.</p>
+    <div id="syncSetup" class="dialog-body" style="padding:0">
+      <ol class="steps">
+        <li>Откройте <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">github.com/settings/personal-access-tokens/new</a> (нужен аккаунт GitHub).</li>
+        <li>В правах аккаунта (Account permissions) добавьте <b>Gists</b> с доступом <b>Read and write</b>. Другие права не нужны.</li>
+        <li>Создайте токен, скопируйте его и вставьте ниже. На втором устройстве вставьте тот же токен.</li>
+      </ol>
+      <div class="field">
+        <label for="syncToken">Токен GitHub</label>
+        <input id="syncToken" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…">
+      </div>
+      <div class="dialog-foot">
+        <button type="button" class="btn primary" id="btnSyncConnect">Подключить</button>
+      </div>
+    </div>
+    <div id="syncConnected" class="dialog-body" style="padding:0" hidden>
+      <p style="margin:0;font-size:14px">Подключено. Журнал лежит в gist <a id="syncGistLink" href="https://gist.github.com/" target="_blank" rel="noopener"></a>.</p>
+      <div class="dialog-foot">
+        <button type="button" class="btn danger spacer" id="btnSyncDisconnect">Отключить на этом устройстве</button>
+        <button type="button" class="btn primary" id="btnSyncNow">Синхронизировать сейчас</button>
+      </div>
+    </div>
+    <p class="status-line" id="syncStatus" aria-live="polite"></p>
+    <p class="small-note">Скриншоты не синхронизируются и остаются на устройстве, где их добавили. Перенести их можно JSON-файлом из «Импорт / экспорт».</p>
+    <p class="small-note">Токен хранится только в этом браузере. Давайте ему доступ лишь к Gists: на github.io все ваши сайты делят одно хранилище браузера.</p>
+  </div>
+</dialog>
+
+<!-- Screenshot viewer -->
+<dialog id="lightbox" aria-labelledby="lbTitle">
+  <div class="dialog-body">
+    <div class="dialog-head">
+      <h2 id="lbTitle" style="font-size:15px"></h2>
+      <div class="actions">
+        <button type="button" class="icon-btn" id="lbPrev" aria-label="Предыдущий скриншот">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></svg>
+        </button>
+        <button type="button" class="icon-btn" id="lbNext" aria-label="Следующий скриншот">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+        </button>
+        <button type="button" class="icon-btn" data-close aria-label="Закрыть">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="lb-img" id="lbBox"></div>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script>
+(() => {
+  'use strict';
+
+  const STORAGE_KEY = 'trades-tracker:v1';
+  const CURRENCY_SIGNS = { USD: '$', USDT: 'USDT', EUR: '€', RUB: '₽' };
+  const CSV_FIELDS = ['id', 'symbol', 'market', 'side', 'openedAt', 'closedAt', 'entry', 'exit', 'qty', 'fees', 'stop', 'target', 'setup', 'notes'];
+
+  const $ = (sel) => document.querySelector(sel);
+  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
+  // ---------- Storage ----------
+
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && Array.isArray(parsed.trades)) return { deleted: {}, currencyAt: 0, ...parsed };
+      }
+    } catch (e) { /* storage unavailable or corrupted: fall through to sample data */ }
+    return { trades: sampleTrades(), currency: 'USD', currencyAt: 0, sample: true, deleted: {} };
+  }
+
+  function saveState() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { /* storage unavailable */ }
+  }
+
+  // Every user change goes through here so the synced copy follows.
+  function commit() {
+    saveState();
+    scheduleSync();
+  }
+
+  // ---------- Helpers ----------
+
+  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+  function toNum(v) {
+    if (v === null || v === undefined) return null;
+    const s = String(v).trim().replace(',', '.').replace(/\s/g, '');
+    if (s === '') return null;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function pad(n) { return String(n).padStart(2, '0'); }
+  function localIso(d) {
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  const nf2 = new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const nf1 = new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const nfPrice = new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 8 });
+  const nfQty = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 8 });
+  const dfShort = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const dfDay = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short' });
+  const dfYear = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' });
+
+  function money(v, { sign = true } = {}) {
+    if (v === null || !Number.isFinite(v)) return '—';
+    const s = sign ? (v > 0 ? '+' : v < 0 ? '−' : '') : (v < 0 ? '−' : '');
+    return `${s}${nf2.format(Math.abs(v))} ${CURRENCY_SIGNS[state.currency] || ''}`.trim();
+  }
+  function pct(v) {
+    if (v === null || !Number.isFinite(v)) return '—';
+    return `${v > 0 ? '+' : v < 0 ? '−' : ''}${nf2.format(Math.abs(v))}%`;
+  }
+  function rmult(v) {
+    if (v === null || !Number.isFinite(v)) return '—';
+    return `${v > 0 ? '+' : v < 0 ? '−' : ''}${nf2.format(Math.abs(v))}R`;
+  }
+  const tone = (v) => (v > 0 ? 'pos' : v < 0 ? 'neg' : '');
+
+  function fmtDate(iso, fmt = dfShort) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? iso : fmt.format(d);
+  }
+
+  // ---------- Trade math ----------
+
+  function calc(t) {
+    const dir = t.side === 'short' ? -1 : 1;
+    const fees = t.fees || 0;
+    const closed = t.exit !== null && t.exit !== undefined;
+    const cost = t.entry * t.qty;
+    const pnl = closed ? (t.exit - t.entry) * t.qty * dir - fees : null;
+    const ret = closed && cost ? (pnl / cost) * 100 : null;
+    const risk = t.stop ? Math.abs(t.entry - t.stop) * t.qty : null;
+    const reward = t.target ? Math.abs(t.target - t.entry) * t.qty : null;
+    const r = closed && risk ? pnl / risk : null;
+    return { closed, pnl, ret, risk, reward, r, cost };
+  }
+
+  function closeTime(t) { return t.closedAt || t.openedAt; }
+
+  function computeStats(trades) {
+    const closed = trades.map((t) => ({ t, c: calc(t) })).filter((x) => x.c.closed)
+      .sort((a, b) => closeTime(a.t).localeCompare(closeTime(b.t)));
+    const pnls = closed.map((x) => x.c.pnl);
+    const wins = pnls.filter((p) => p > 0);
+    const losses = pnls.filter((p) => p < 0);
+    const grossProfit = wins.reduce((a, b) => a + b, 0);
+    const grossLoss = losses.reduce((a, b) => a + b, 0);
+    const net = grossProfit + grossLoss;
+
+    let equity = 0, peak = 0, maxDd = 0;
+    const curve = closed.map((x) => {
+      equity += x.c.pnl;
+      peak = Math.max(peak, equity);
+      maxDd = Math.max(maxDd, peak - equity);
+      return { at: closeTime(x.t), v: equity };
+    });
+
+    const rs = closed.map((x) => x.c.r).filter((r) => r !== null);
+    return {
+      total: trades.length,
+      closedCount: closed.length,
+      openCount: trades.length - closed.length,
+      net,
+      winRate: closed.length ? (wins.length / closed.length) * 100 : null,
+      wins: wins.length,
+      losses: losses.length,
+      profitFactor: grossLoss ? grossProfit / Math.abs(grossLoss) : (grossProfit > 0 ? Infinity : null),
+      expectancy: closed.length ? net / closed.length : null,
+      avgWin: wins.length ? grossProfit / wins.length : null,
+      avgLoss: losses.length ? grossLoss / losses.length : null,
+      avgR: rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : null,
+      maxDd,
+      best: pnls.length ? Math.max(...pnls) : null,
+      worst: pnls.length ? Math.min(...pnls) : null,
+      curve,
+    };
+  }
+
+  // ---------- Sample data ----------
+
+  function sampleTrades() {
+    const now = new Date();
+    const at = (daysAgo, h, m) => {
+      const d = new Date(now);
+      d.setDate(d.getDate() - daysAgo);
+      d.setHours(h, m, 0, 0);
+      return localIso(d);
+    };
+    const rows = [
+      ['BTCUSDT', 'Крипто', 'long', 31, 10, 15, 31, 18, 40, 61250, 62480, 0.15, 7.4, 60600, 63000, 'Пробой уровня', 'Вход после ретеста, вышел частично раньше тейка.'],
+      ['ETHUSDT', 'Крипто', 'short', 29, 14, 5, 28, 9, 30, 2680, 2721, 3, 4.9, 2725, 2560, 'Отскок от EMA', 'Стоп выбило на новостях.'],
+      ['AAPL', 'Акции', 'long', 27, 17, 35, 24, 22, 10, 226.4, 231.9, 40, 2, 222.5, 234, 'Гэп на открытии', ''],
+      ['SOLUSDT', 'Крипто', 'long', 23, 8, 0, 23, 15, 20, 142.3, 139.8, 60, 5.1, 139.5, 150, 'Пробой уровня', 'Ложный пробой, вышел по стопу вручную.'],
+      ['EURUSD', 'Форекс', 'short', 21, 11, 45, 20, 16, 0, 1.0942, 1.0898, 100000, 7, 1.0975, 1.0880, 'Отскок от EMA', ''],
+      ['NVDA', 'Акции', 'long', 18, 17, 40, 15, 21, 50, 118.2, 126.75, 25, 2, 114, 128, 'Пробой уровня', 'Держал по плану, хорошая сделка.'],
+      ['BTCUSDT', 'Крипто', 'short', 14, 3, 20, 14, 12, 5, 64100, 64650, 0.1, 6.4, 64700, 62000, 'Против тренда', 'Шортил против тренда — не по системе.'],
+      ['TSLA', 'Акции', 'short', 11, 18, 0, 10, 20, 30, 251.4, 243.1, 20, 2, 256, 240, 'Гэп на открытии', ''],
+      ['ETHUSDT', 'Крипто', 'long', 8, 9, 10, 6, 13, 0, 2590, 2668, 4, 5.2, 2545, 2700, 'Отскок от EMA', ''],
+      ['XAUUSD', 'Форекс', 'long', 5, 10, 30, 4, 17, 15, 2648, 2639.5, 2, 3, 2638, 2672, 'Пробой уровня', 'Слишком рано вошёл.'],
+      ['SOLUSDT', 'Крипто', 'long', 2, 12, 0, null, null, null, 151.6, null, 40, 2.4, 147, 165, 'Пробой уровня', 'Позиция открыта, стоп в безубыток после 158.'],
+      ['AAPL', 'Акции', 'long', 1, 17, 30, null, null, null, 233.1, null, 30, 1, 229.5, 240, 'Отскок от EMA', ''],
+    ];
+    return rows.map(([symbol, market, side, od, oh, om, cd, ch, cm, entry, exit, qty, fees, stop, target, setup, notes]) => ({
+      id: uid(), symbol, market, side,
+      openedAt: at(od, oh, om),
+      closedAt: cd === null ? '' : at(cd, ch, cm),
+      entry, exit, qty, fees, stop, target, setup, notes,
+    }));
+  }
+
+  // ---------- State ----------
+
+  const state = loadState();
+  const ui = { search: '', status: 'all', side: 'all', market: 'all', group: 'symbol', month: null, day: null };
+  let editingId = null;
+  let formImages = [];
+
+  // After the journal is replaced, jump the calendar to the newest data instead of a stale month.
+  function resetView() { ui.month = null; ui.day = null; }
+
+  function normalizeTrade(raw) {
+    const side = String(raw.side || '').toLowerCase();
+    const t = {
+      id: raw.id ? String(raw.id) : uid(),
+      symbol: String(raw.symbol || '').trim().toUpperCase(),
+      market: String(raw.market || 'Другое').trim() || 'Другое',
+      side: side === 'short' || side === 'sell' || side === 'шорт' ? 'short' : 'long',
+      openedAt: String(raw.openedAt || '').trim(),
+      closedAt: String(raw.closedAt || '').trim(),
+      entry: toNum(raw.entry),
+      exit: toNum(raw.exit),
+      qty: toNum(raw.qty),
+      fees: toNum(raw.fees) || 0,
+      stop: toNum(raw.stop),
+      target: toNum(raw.target),
+      setup: String(raw.setup || '').trim(),
+      notes: String(raw.notes || '').trim(),
+      images: Array.isArray(raw.images) ? raw.images.map(String) : [],
+      updatedAt: Number(raw.updatedAt) || 0,
+    };
+    if (!t.symbol || t.entry === null || t.qty === null || !t.openedAt) return null;
+    return t;
+  }
+
+  // ---------- Filtering ----------
+
+  const dayOf = (t) => closeTime(t).slice(0, 10);
+
+  function filtered({ ignoreDay = false } = {}) {
+    const q = ui.search.trim().toLowerCase();
+    return state.trades.filter((t) => {
+      const c = calc(t);
+      if (!ignoreDay && ui.day && !(c.closed && dayOf(t) === ui.day)) return false;
+      if (ui.side !== 'all' && t.side !== ui.side) return false;
+      if (ui.market !== 'all' && t.market !== ui.market) return false;
+      if (ui.status === 'open' && c.closed) return false;
+      if (ui.status === 'closed' && !c.closed) return false;
+      if (ui.status === 'win' && !(c.closed && c.pnl > 0)) return false;
+      if (ui.status === 'loss' && !(c.closed && c.pnl < 0)) return false;
+      if (q && !`${t.symbol} ${t.setup} ${t.notes} ${t.market}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }
+  const filtersActive = () => ui.search.trim() || ui.status !== 'all' || ui.side !== 'all' || ui.market !== 'all' || ui.day;
+
+  // ---------- Render ----------
+
+  function render() {
+    $('#currency').value = state.currency;
+    $('#sampleNotice').hidden = !state.sample;
+    renderMarketFilter();
+    renderDatalists();
+    const base = filtered({ ignoreDay: true });
+    const list = ui.day ? filtered() : base;
+    const stats = computeStats(list);
+    renderStats(stats);
+    renderEquity(stats.curve);
+    renderBreakdown(list);
+    renderCalendar(base);
+    renderDayChip();
+    renderTable(list);
+  }
+
+  function renderMarketFilter() {
+    const sel = $('#fMarket');
+    const markets = [...new Set(state.trades.map((t) => t.market))].sort();
+    if (ui.market !== 'all' && !markets.includes(ui.market)) ui.market = 'all';
+    sel.innerHTML = '<option value="all">Все рынки</option>' + markets.map((m) => `<option>${escapeHtml(m)}</option>`).join('');
+    sel.value = ui.market;
+  }
+
+  function renderDatalists() {
+    const uniq = (key) => [...new Set(state.trades.map((t) => t[key]).filter(Boolean))].sort();
+    $('#symbolList').innerHTML = uniq('symbol').map((s) => `<option value="${escapeHtml(s)}">`).join('');
+    $('#setupList').innerHTML = uniq('setup').map((s) => `<option value="${escapeHtml(s)}">`).join('');
+  }
+
+  function renderStats(s) {
+    const pf = s.profitFactor === null ? '—' : s.profitFactor === Infinity ? '∞' : nf2.format(s.profitFactor);
+    const tiles = [
+      { cls: 'hero', label: 'Чистый P&L', value: money(s.closedCount ? s.net : null), tone: tone(s.net), note: `${s.closedCount} закрыто · ${s.openCount} открыто` },
+      { label: 'Винрейт', value: s.winRate === null ? '—' : `${nf1.format(s.winRate)}%`, note: `${s.wins} в плюс · ${s.losses} в минус` },
+      { label: 'Профит-фактор', value: pf, tone: s.profitFactor === null ? '' : s.profitFactor >= 1 ? 'pos' : 'neg', note: 'прибыль / убыток' },
+      { label: 'Мат. ожидание', value: money(s.expectancy), tone: tone(s.expectancy), note: s.avgR === null ? 'на сделку' : `на сделку · ${rmult(s.avgR)} в среднем` },
+      { label: 'Средняя прибыль', value: money(s.avgWin), tone: 'pos', note: s.wins ? `лучшая ${money(s.best)}` : '' },
+      { label: 'Средний убыток', value: money(s.avgLoss), tone: s.avgLoss ? 'neg' : '', note: s.losses ? `худшая ${money(s.worst)}` : '' },
+      { label: 'Макс. просадка', value: s.closedCount ? money(-s.maxDd, { sign: false }) : '—', tone: s.maxDd > 0 ? 'neg' : '', note: 'от пика кривой' },
+    ];
+    $('#stats').innerHTML = tiles.map((t) => `
+      <div class="stat ${t.cls || ''}">
+        <dt>${t.label}</dt>
+        <dd class="${t.tone || ''}" title="${escapeHtml(t.value)}">${escapeHtml(t.value)}</dd>
+        <small>${escapeHtml(t.note || '')}</small>
+      </div>`).join('');
+    const scope = $('#scope');
+    scope.hidden = !filtersActive();
+    scope.textContent = `Статистика посчитана по отфильтрованным сделкам: ${s.total} из ${state.trades.length}.`;
+  }
+
+  function niceStep(range, count) {
+    const raw = range / count;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const norm = raw / mag;
+    return (norm >= 5 ? 10 : norm >= 2 ? 5 : norm >= 1 ? 2 : 1) * mag;
+  }
+
+  function shortMoney(v) {
+    const a = Math.abs(v);
+    const s = v < 0 ? '−' : '';
+    if (a >= 1e6) return `${s}${nf1.format(a / 1e6)}M`;
+    if (a >= 1e4) return `${s}${nf1.format(a / 1e3)}K`;
+    return `${s}${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: a < 10 ? 2 : 0 }).format(a)}`;
+  }
+
+  function renderEquity(curve) {
+    const wrap = $('#equityWrap');
+    if (curve.length < 2) {
+      wrap.innerHTML = `<div class="empty-chart">${curve.length ? 'Закройте ещё одну сделку, и здесь появится кривая доходности.' : 'Кривая появится после первых закрытых сделок.'}</div>`;
+      return;
+    }
+    const W = Math.max(280, wrap.clientWidth || 600);
+    const H = 240;
+    const m = { l: 52, r: 16, t: 14, b: 26 };
+    const pts = [{ at: null, v: 0 }, ...curve];
+    let lo = Math.min(0, ...pts.map((p) => p.v));
+    let hi = Math.max(0, ...pts.map((p) => p.v));
+    if (hi === lo) { hi += 1; lo -= 1; }
+    const step = niceStep(hi - lo, 4);
+    lo = Math.floor(lo / step) * step;
+    hi = Math.ceil(hi / step) * step;
+    const x = (i) => m.l + (i / (pts.length - 1)) * (W - m.l - m.r);
+    const y = (v) => m.t + (1 - (v - lo) / (hi - lo)) * (H - m.t - m.b);
+
+    let grid = '';
+    for (let v = lo; v <= hi + step / 2; v += step) {
+      const yy = y(v).toFixed(1);
+      grid += `<line class="${Math.abs(v) < step / 1e6 ? 'zero' : 'grid'}" x1="${m.l}" x2="${W - m.r}" y1="${yy}" y2="${yy}"/>`;
+      grid += `<text x="${m.l - 8}" y="${yy}" text-anchor="end" dominant-baseline="middle">${shortMoney(Math.abs(v) < step / 1e6 ? 0 : v)}</text>`;
+    }
+    const line = pts.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.v).toFixed(1)}`).join('');
+    const area = `${line}L${x(pts.length - 1).toFixed(1)},${y(0).toFixed(1)}L${x(0).toFixed(1)},${y(0).toFixed(1)}Z`;
+    const last = pts[pts.length - 1];
+    const lx = x(pts.length - 1), ly = y(last.v);
+    const firstDate = fmtDate(curve[0].at, dfDay);
+    const lastDate = fmtDate(last.at, dfDay);
+
+    wrap.innerHTML = `
+      <svg id="equity" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Кривая доходности: итог ${escapeHtml(money(last.v))} за ${curve.length} сделок">
+        ${grid}
+        <path class="area" d="${area}"/>
+        <path class="line" d="${line}"/>
+        <circle class="dot" cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="4.5"/>
+        <text class="end-label" x="${(lx - 8).toFixed(1)}" y="${(ly + (last.v >= 0 ? -12 : 16)).toFixed(1)}" text-anchor="end">${escapeHtml(money(last.v))}</text>
+        <text x="${m.l}" y="${H - 6}">${escapeHtml(firstDate)}</text>
+        <text x="${W - m.r}" y="${H - 6}" text-anchor="end">${escapeHtml(lastDate)} · ${curve.length} сделок</text>
+      </svg>`;
+  }
+
+  function renderBreakdown(list) {
+    const groups = new Map();
+    for (const t of list) {
+      const c = calc(t);
+      if (!c.closed) continue;
+      const key = ui.group === 'setup' ? (t.setup || 'Без сетапа') : t.symbol;
+      const g = groups.get(key) || { name: key, n: 0, wins: 0, pnl: 0 };
+      g.n += 1; g.pnl += c.pnl; if (c.pnl > 0) g.wins += 1;
+      groups.set(key, g);
+    }
+    const rows = [...groups.values()].sort((a, b) => b.pnl - a.pnl);
+    const max = Math.max(1e-9, ...rows.map((r) => Math.abs(r.pnl)));
+    $('#breakdown').innerHTML = rows.length ? rows.map((r) => `
+      <li>
+        <span class="name">${escapeHtml(r.name)}</span>
+        <span class="val num ${tone(r.pnl)}">${escapeHtml(money(r.pnl))}</span>
+        <span class="meta">${r.n} ${plural(r.n, 'сделка', 'сделки', 'сделок')} · винрейт ${nf1.format((r.wins / r.n) * 100)}%</span>
+        <span class="bar"><i class="${tone(r.pnl) || 'pos'}" style="width:${((Math.abs(r.pnl) / max) * 100).toFixed(1)}%"></i></span>
+      </li>`).join('') : '<li class="muted">Пока нет закрытых сделок.</li>';
+  }
+
+  const dfMonth = new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric' });
+  const dfDayLong = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long' });
+  const WEEKDAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+  function dailyPnl(list) {
+    const byDay = new Map();
+    for (const t of list) {
+      const c = calc(t);
+      if (!c.closed) continue;
+      const d = byDay.get(dayOf(t)) || { pnl: 0, n: 0 };
+      d.pnl += c.pnl;
+      d.n += 1;
+      byDay.set(dayOf(t), d);
+    }
+    return byDay;
+  }
+
+  function shiftMonth(ym, delta) {
+    const [y, m] = ym.split('-').map(Number);
+    const d = new Date(y, m - 1 + delta, 1);
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+  }
+
+  function renderCalendar(list) {
+    const byDay = dailyPnl(list);
+    if (!ui.month) {
+      const keys = [...byDay.keys()].sort();
+      ui.month = (keys.length ? keys[keys.length - 1] : localIso(new Date())).slice(0, 7);
+    }
+    const [y, mo] = ui.month.split('-').map(Number);
+    const first = new Date(y, mo - 1, 1);
+    const daysIn = new Date(y, mo, 0).getDate();
+    const lead = (first.getDay() + 6) % 7; // weeks start on Monday
+    const today = localIso(new Date()).slice(0, 10);
+    const key = (day) => `${y}-${pad(mo)}-${pad(day)}`;
+
+    let max = 0, total = 0, trades = 0, green = 0, red = 0;
+    for (let day = 1; day <= daysIn; day++) {
+      const d = byDay.get(key(day));
+      if (!d) continue;
+      max = Math.max(max, Math.abs(d.pnl));
+      total += d.pnl; trades += d.n;
+      if (d.pnl > 0) green++; else if (d.pnl < 0) red++;
+    }
+
+    const signed = (v) => (v > 0 ? '+' : '') + shortMoney(v);
+    let html = [...WEEKDAYS, 'Неделя'].map((d) => `<div class="dow">${d}</div>`).join('');
+    let week = { pnl: 0, n: 0 };
+    const cells = Math.ceil((lead + daysIn) / 7) * 7;
+    for (let i = 0; i < cells; i++) {
+      const day = i - lead + 1;
+      if (day < 1 || day > daysIn) {
+        html += '<div class="day out" aria-hidden="true"></div>';
+      } else {
+        const k = key(day);
+        const d = byDay.get(k);
+        const isToday = k === today ? ' today' : '';
+        if (d) {
+          week.pnl += d.pnl; week.n += d.n;
+          const kind = d.pnl > 0 ? ' win' : d.pnl < 0 ? ' loss' : '';
+          const alpha = max ? Math.round(14 + (Math.abs(d.pnl) / max) * 36) : 14;
+          const label = `${dfDayLong.format(new Date(y, mo - 1, day))}: ${money(d.pnl)}, ${d.n} ${plural(d.n, 'сделка', 'сделки', 'сделок')}`;
+          html += `<button type="button" class="day${kind}${isToday}${ui.day === k ? ' selected' : ''}" data-day="${k}" style="--a:${alpha}%" aria-pressed="${ui.day === k}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">
+            <span class="d">${day}</span><span class="p ${tone(d.pnl)}">${escapeHtml(signed(d.pnl))}</span><span class="n">${d.n} ${plural(d.n, 'сделка', 'сделки', 'сделок')}</span></button>`;
+        } else {
+          html += `<div class="day${isToday}"><span class="d">${day}</span></div>`;
+        }
+      }
+      if (i % 7 === 6) {
+        html += week.n
+          ? `<div class="day week" title="${escapeHtml(`Итог недели: ${money(week.pnl)}`)}"><span class="d">Итог</span><span class="p ${tone(week.pnl)}">${escapeHtml(signed(week.pnl))}</span><span class="n">${week.n} ${plural(week.n, 'сделка', 'сделки', 'сделок')}</span></div>`
+          : '<div class="day week" aria-hidden="true"></div>';
+        week = { pnl: 0, n: 0 };
+      }
+    }
+    $('#calendar').innerHTML = html;
+    $('#calMonth').textContent = dfMonth.format(first).replace(/\s*г\.$/, '');
+    const totalEl = $('#calTotal');
+    totalEl.innerHTML = trades
+      ? `За месяц <b class="num ${tone(total)}">${escapeHtml(money(total))}</b> · ${green} ${plural(green, 'день', 'дня', 'дней')} в плюс · ${red} в минус`
+      : 'В этом месяце нет закрытых сделок';
+  }
+
+  function renderDayChip() {
+    const chip = $('#dayChip');
+    chip.hidden = !ui.day;
+    if (ui.day) {
+      const [y, m, d] = ui.day.split('-').map(Number);
+      chip.innerHTML = `${escapeHtml(dfDayLong.format(new Date(y, m - 1, d)))} <span aria-hidden="true">✕</span>`;
+      chip.setAttribute('aria-label', `Сбросить фильтр по дню ${dfDayLong.format(new Date(y, m - 1, d))}`);
+    }
+  }
+
+  function plural(n, one, few, many) {
+    const m10 = n % 10, m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return one;
+    if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+    return many;
+  }
+
+  const ICON_EDIT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16v4z"/></svg>';
+  const ICON_DEL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>';
+
+  const ICON_IMG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 16 5-5 4 4 3-3 6 6"/></svg>';
+
+  function shotBadge(t) {
+    const n = (t.images || []).length;
+    if (!n) return '';
+    return `<button type="button" class="shot-badge" data-action="shots" aria-label="Скриншоты сделки ${escapeHtml(t.symbol)}: ${n}">${ICON_IMG}${n}</button>`;
+  }
+
+  function renderTable(list) {
+    const sorted = [...list].sort((a, b) => b.openedAt.localeCompare(a.openedAt));
+    $('#rows').innerHTML = sorted.map((t) => {
+      const c = calc(t);
+      return `
+      <tr data-id="${escapeHtml(t.id)}">
+        <td class="num">${escapeHtml(fmtDate(t.openedAt))}${c.closed && t.closedAt ? `<span class="sub">→ ${escapeHtml(fmtDate(t.closedAt))}</span>` : ''}</td>
+        <td><span class="sym">${escapeHtml(t.symbol)}</span>${shotBadge(t)}<span class="sub">${escapeHtml(t.market)}</span></td>
+        <td><span class="pill ${t.side}">${t.side === 'long' ? 'Long' : 'Short'}</span></td>
+        <td class="r num">${nfPrice.format(t.entry)}</td>
+        <td class="r num">${c.closed ? nfPrice.format(t.exit) : '<span class="pill open">Открыта</span>'}</td>
+        <td class="r num">${nfQty.format(t.qty)}</td>
+        <td class="r num ${tone(c.pnl)}">${c.closed ? escapeHtml(money(c.pnl)) : '—'}</td>
+        <td class="r num ${tone(c.ret)}">${pct(c.ret)}</td>
+        <td class="r num ${tone(c.r)}">${rmult(c.r)}</td>
+        <td>${escapeHtml(t.setup) || '<span class="muted">—</span>'}</td>
+        <td class="note" title="${escapeHtml(t.notes)}">${escapeHtml(t.notes)}</td>
+        <td><div class="row-actions">
+          <button type="button" class="icon-btn" data-action="edit" aria-label="Изменить сделку ${escapeHtml(t.symbol)}">${ICON_EDIT}</button>
+          <button type="button" class="icon-btn" data-action="delete" aria-label="Удалить сделку ${escapeHtml(t.symbol)}">${ICON_DEL}</button>
+        </div></td>
+      </tr>`;
+    }).join('');
+
+    const empty = $('#emptyState');
+    const table = $('.table-scroll');
+    if (!state.trades.length) {
+      empty.innerHTML = '<strong>Журнал пуст</strong>Нажмите «Новая сделка», чтобы записать первый ордер, или загрузите резервную копию.';
+    } else if (!list.length) {
+      empty.innerHTML = '<strong>Ничего не найдено</strong>Попробуйте изменить фильтры или поиск.';
+    }
+    empty.hidden = list.length > 0;
+    table.hidden = list.length === 0;
+    $('#tableFoot').textContent = `Показано ${list.length} из ${state.trades.length} ${plural(state.trades.length, 'сделки', 'сделок', 'сделок')}`;
+    $('#tableFoot').hidden = !state.trades.length;
+  }
+
+  // ---------- Trade form ----------
+
+  const form = $('#tradeForm');
+  const tradeDialog = $('#tradeDialog');
+
+  function openTradeForm(trade) {
+    editingId = trade ? trade.id : null;
+    form.reset();
+    formImages = trade ? [...(trade.images || [])] : [];
+    renderFormShots();
+    $('#formError').hidden = true;
+    $('#tradeDialogTitle').textContent = trade ? `Сделка ${trade.symbol}` : 'Новая сделка';
+    $('#btnDeleteInForm').hidden = !trade;
+    const t = trade || { side: 'long', market: lastMarket(), openedAt: localIso(new Date()) };
+    for (const key of ['symbol', 'market', 'openedAt', 'closedAt', 'entry', 'exit', 'qty', 'fees', 'stop', 'target', 'setup', 'notes']) {
+      const el = form.elements[key];
+      const v = t[key];
+      el.value = v === null || v === undefined ? '' : (key === 'fees' && v === 0 && !trade ? '' : v);
+    }
+    form.elements.side.value = t.side || 'long';
+    updatePreview();
+    tradeDialog.showModal();
+    if (!trade) form.elements.symbol.focus();
+  }
+
+  function lastMarket() {
+    const last = [...state.trades].sort((a, b) => b.openedAt.localeCompare(a.openedAt))[0];
+    return last ? last.market : 'Крипто';
+  }
+
+  function readForm() {
+    const f = form.elements;
+    return {
+      symbol: f.symbol.value.trim().toUpperCase(),
+      market: f.market.value,
+      side: f.side.value,
+      openedAt: f.openedAt.value,
+      closedAt: f.closedAt.value,
+      entry: toNum(f.entry.value),
+      exit: toNum(f.exit.value),
+      qty: toNum(f.qty.value),
+      fees: toNum(f.fees.value) || 0,
+      stop: toNum(f.stop.value),
+      target: toNum(f.target.value),
+      setup: f.setup.value.trim(),
+      notes: f.notes.value.trim(),
+    };
+  }
+
+  function updatePreview() {
+    const t = readForm();
+    const box = $('#tradePreview');
+    if (t.entry === null || t.qty === null) {
+      box.innerHTML = '<div><span>Подсказка</span>Введите цену входа и количество — здесь появится расчёт позиции, риска и результата.</div>';
+      return;
+    }
+    const c = calc(t);
+    const items = [['Размер позиции', money(c.cost, { sign: false })]];
+    if (c.risk !== null) items.push(['Риск до стопа', money(c.risk, { sign: false })]);
+    if (c.risk && c.reward !== null) items.push(['Риск / прибыль', `1 : ${nf2.format(c.reward / c.risk)}`]);
+    if (c.closed) {
+      items.push(['Результат', `<b class="${tone(c.pnl)}">${escapeHtml(money(c.pnl))}</b>`, true]);
+      items.push(['Доходность', `<b class="${tone(c.ret)}">${pct(c.ret)}</b>`, true]);
+      if (c.r !== null) items.push(['В R', `<b class="${tone(c.r)}">${rmult(c.r)}</b>`, true]);
+    }
+    box.innerHTML = items.map(([k, v, raw]) => `<div><span>${k}</span>${raw ? v : `<b>${escapeHtml(v)}</b>`}</div>`).join('');
+  }
+
+  function validate(t) {
+    if (!t.symbol) return 'Укажите тикер.';
+    if (!t.openedAt) return 'Укажите дату входа.';
+    if (t.entry === null || t.entry <= 0) return 'Цена входа должна быть больше нуля.';
+    if (t.qty === null || t.qty <= 0) return 'Количество должно быть больше нуля.';
+    if (t.closedAt && t.exit === null) return 'Указана дата выхода, но нет цены выхода. Заполните цену или очистите дату.';
+    if (t.closedAt && t.closedAt < t.openedAt) return 'Дата выхода раньше даты входа.';
+    if (t.stop !== null && t.exit === null) {
+      const wrongSide = t.side === 'long' ? t.stop >= t.entry : t.stop <= t.entry;
+      if (wrongSide) return t.side === 'long' ? 'Для Long стоп-лосс должен быть ниже цены входа.' : 'Для Short стоп-лосс должен быть выше цены входа.';
+    }
+    return null;
+  }
+
+  form.addEventListener('input', updatePreview);
+  form.addEventListener('change', updatePreview);
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const t = readForm();
+    if (t.exit !== null && !t.closedAt) t.closedAt = localIso(new Date());
+    t.images = [...formImages];
+    t.updatedAt = Date.now();
+    const err = validate(t);
+    if (err) {
+      const el = $('#formError');
+      el.textContent = err;
+      el.hidden = false;
+      return;
+    }
+    if (editingId) {
+      const i = state.trades.findIndex((x) => x.id === editingId);
+      if (i >= 0) state.trades[i] = { ...state.trades[i], ...t };
+      toast('Сделка обновлена');
+    } else if (state.sample) {
+      // The first real trade replaces the examples, so they never mix with the user's own figures.
+      state.trades = [{ id: uid(), ...t }];
+      state.sample = false;
+      resetView();
+      toast('Сделка добавлена, примеры удалены');
+    } else {
+      state.trades.push({ id: uid(), ...t });
+      toast('Сделка добавлена');
+    }
+    commit();
+    tradeDialog.close();
+    render();
+    gcImages();
+  });
+
+  $('#btnDeleteInForm').addEventListener('click', () => {
+    const t = state.trades.find((x) => x.id === editingId);
+    if (!t) return;
+    tradeDialog.close();
+    askDelete(t);
+  });
+
+  // ---------- Delete ----------
+
+  const confirmDialog = $('#confirmDialog');
+  let pendingDelete = null;
+
+  function askDelete(t) {
+    pendingDelete = t.id;
+    const c = calc(t);
+    $('#confirmText').textContent = `${t.side === 'long' ? 'Long' : 'Short'} ${t.symbol} от ${fmtDate(t.openedAt, dfYear)}${c.closed ? `, результат ${money(c.pnl)}` : ''}. Это действие нельзя отменить.`;
+    confirmDialog.showModal();
+  }
+
+  $('#confirmOk').addEventListener('click', () => {
+    state.trades = state.trades.filter((x) => x.id !== pendingDelete);
+    if (!state.sample) state.deleted[pendingDelete] = Date.now();
+    pendingDelete = null;
+    commit();
+    confirmDialog.close();
+    render();
+    gcImages();
+    toast('Сделка удалена');
+  });
+
+  // ---------- Table interactions ----------
+
+  $('#rows').addEventListener('click', (e) => {
+    const tr = e.target.closest('tr[data-id]');
+    if (!tr) return;
+    const t = state.trades.find((x) => x.id === tr.dataset.id);
+    if (!t) return;
+    const action = e.target.closest('[data-action]')?.dataset.action;
+    if (action === 'delete') askDelete(t);
+    else if (action === 'shots') openLightbox(t.images, 0, t.symbol);
+    else openTradeForm(t);
+  });
+
+  // ---------- Filters & toolbar ----------
+
+  $('#fSearch').addEventListener('input', (e) => { ui.search = e.target.value; render(); });
+  $('#fStatus').addEventListener('change', (e) => { ui.status = e.target.value; render(); });
+  $('#fSide').addEventListener('change', (e) => { ui.side = e.target.value; render(); });
+  $('#fMarket').addEventListener('change', (e) => { ui.market = e.target.value; render(); });
+  $$('.seg button').forEach((b) => b.addEventListener('click', () => {
+    ui.group = b.dataset.group;
+    $$('.seg button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    render();
+  }));
+  $('#calPrev').addEventListener('click', () => { ui.month = shiftMonth(ui.month, -1); render(); });
+  $('#calNext').addEventListener('click', () => { ui.month = shiftMonth(ui.month, 1); render(); });
+  $('#calendar').addEventListener('click', (e) => {
+    const cell = e.target.closest('button[data-day]');
+    if (!cell) return;
+    ui.day = ui.day === cell.dataset.day ? null : cell.dataset.day;
+    render();
+    if (ui.day) $('.journal').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+  });
+  $('#dayChip').addEventListener('click', () => { ui.day = null; render(); });
+  $('#currency').addEventListener('change', (e) => {
+    state.currency = e.target.value;
+    state.currencyAt = Date.now();
+    commit();
+    render();
+  });
+  $('#btnAdd').addEventListener('click', () => openTradeForm(null));
+  $('#btnClearSample').addEventListener('click', () => {
+    state.trades = [];
+    state.sample = false;
+    resetView();
+    commit();
+    render();
+    toast('Примеры удалены — журнал готов к работе');
+  });
+
+  $$('[data-close]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
+  $$('dialog').forEach((d) => d.addEventListener('click', (e) => { if (e.target === d) d.close(); }));
+
+  let resizeTimer;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => renderEquity(computeStats(filtered()).curve), 120);
+  });
+
+  // ---------- Import / export ----------
+
+  const dataDialog = $('#dataDialog');
+
+  function exportJson() {
+    return JSON.stringify({ app: 'trades-tracker', version: 1, exportedAt: new Date().toISOString(), currency: state.currency, trades: state.trades }, null, 2);
+  }
+
+  function csvCell(v) {
+    const s = v === null || v === undefined ? '' : String(v);
+    return /[",;\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }
+  function exportCsv() {
+    return [CSV_FIELDS.join(','), ...state.trades.map((t) => CSV_FIELDS.map((k) => csvCell(t[k])).join(','))].join('\n');
+  }
+
+  function parseCsv(text) {
+    const firstLine = text.split(/\r?\n/, 1)[0];
+    const delim = (firstLine.match(/;/g) || []).length > (firstLine.match(/,/g) || []).length ? ';' : ',';
+    const rows = [];
+    let row = [], cell = '', quoted = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (quoted) {
+        if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+        else if (ch === '"') quoted = false;
+        else cell += ch;
+      } else if (ch === '"') quoted = true;
+      else if (ch === delim) { row.push(cell); cell = ''; }
+      else if (ch === '\n' || ch === '\r') {
+        if (ch === '\r' && text[i + 1] === '\n') i++;
+        row.push(cell); rows.push(row); row = []; cell = '';
+      } else cell += ch;
+    }
+    if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+    const [header, ...body] = rows.filter((r) => r.some((c) => c.trim() !== ''));
+    if (!header) return [];
+    const keys = header.map((h) => h.trim());
+    return body.map((r) => Object.fromEntries(keys.map((k, i) => [k, r[i] ?? ''])));
+  }
+
+  function parseImport(text) {
+    const trimmed = text.trim();
+    if (!trimmed) throw new Error('Вставьте текст резервной копии или выберите файл.');
+    let rawList;
+    let images = {};
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      let data;
+      try { data = JSON.parse(trimmed); } catch (e) { throw new Error('Не удалось прочитать JSON: проверьте, что текст скопирован целиком.'); }
+      rawList = Array.isArray(data) ? data : data.trades;
+      if (!Array.isArray(data) && data && data.images && typeof data.images === 'object') images = data.images;
+      if (!Array.isArray(rawList)) throw new Error('В JSON нет списка сделок (ожидается поле "trades").');
+    } else {
+      rawList = parseCsv(trimmed);
+    }
+    const trades = rawList.map(normalizeTrade).filter(Boolean);
+    const skipped = rawList.length - trades.length;
+    if (!trades.length) throw new Error('Не найдено ни одной корректной сделки. Нужны поля symbol, side, openedAt, entry и qty.');
+    return { trades, skipped, images };
+  }
+
+  let pendingImport = null; // large files are kept here instead of the textarea
+
+  async function doImport(mode) {
+    const status = $('#dataStatus');
+    try {
+      const { trades, skipped, images } = parseImport(pendingImport ?? $('#dataText').value);
+      const now = Date.now();
+      let imageCount = 0;
+      for (const [id, url] of Object.entries(images)) {
+        const blob = dataUrlToBlob(url);
+        if (blob) { await imageStore.put(id, blob); imageCount++; }
+      }
+      if (mode === 'replace' || state.sample) {
+        if (!state.sample) {
+          const keep = new Set(trades.map((t) => t.id));
+          for (const t of state.trades) if (!keep.has(t.id)) state.deleted[t.id] = now;
+        }
+        state.trades = trades;
+      } else {
+        const ids = new Set(state.trades.map((t) => t.id));
+        state.trades.push(...trades.map((t) => (ids.has(t.id) ? { ...t, id: uid() } : t)));
+      }
+      for (const t of trades) { t.updatedAt = now; delete state.deleted[t.id]; }
+      state.sample = false;
+      pendingImport = null;
+      resetView();
+      commit();
+      render();
+      dataDialog.close();
+      gcImages();
+      toast(`Загружено сделок: ${trades.length}${imageCount ? `, скриншотов: ${imageCount}` : ''}${skipped ? `, пропущено: ${skipped}` : ''}`);
+    } catch (e) {
+      setStatus(e.message, true);
+    }
+  }
+
+  // Inside the claude.ai viewer, files go through its downloads capability; on a normal site, through a plain link.
+  let downloadsPromise = null;
+  function downloadsApi() {
+    if (!window.claude || typeof window.claude.use !== 'function') return Promise.resolve(null);
+    if (!downloadsPromise) downloadsPromise = window.claude.use('downloads').catch(() => null);
+    return downloadsPromise;
+  }
+
+  async function download(name, text, type) {
+    const api = await downloadsApi();
+    if (api) {
+      try {
+        await api.save({ filename: name, data: new Blob([text], { type }) });
+        setStatus(`Файл ${name} сохранён.`);
+      } catch (e) {
+        setStatus(e && e.code === 'declined' ? 'Сохранение отменено.' : 'Не получилось сохранить файл. Скопируйте текст из поля ниже.', e && e.code !== 'declined');
+      }
+      return;
+    }
+    try {
+      const blob = new Blob([text], { type });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      setStatus(`Файл ${name} сохранён. Если загрузка не началась, скопируйте текст из поля ниже.`);
+    } catch (e) {
+      setStatus('Браузер не дал сохранить файл. Скопируйте текст из поля ниже.', true);
+    }
+  }
+
+  async function exportJsonWithImages() {
+    const doc = JSON.parse(exportJson());
+    doc.images = {};
+    for (const id of new Set(state.trades.flatMap((t) => t.images || []))) {
+      const blob = await imageStore.get(id);
+      if (blob) doc.images[id] = await blobToDataUrl(blob);
+    }
+    return JSON.stringify(doc);
+  }
+
+  function setStatus(msg, isError = false) {
+    const s = $('#dataStatus');
+    s.textContent = msg;
+    s.classList.toggle('error', isError);
+  }
+
+  const stamp = () => new Date().toISOString().slice(0, 10);
+
+  $('#btnData').addEventListener('click', () => {
+    pendingImport = null;
+    $('#dataText').value = exportJson();
+    setStatus('');
+    dataDialog.showModal();
+  });
+  $('#dataText').addEventListener('input', () => { pendingImport = null; });
+  $('#btnDownloadJson').addEventListener('click', async () => {
+    pendingImport = null;
+    $('#dataText').value = exportJson();
+    const withImages = $('#withImages').checked && state.trades.some((t) => (t.images || []).length);
+    if (withImages) setStatus('Собираю скриншоты…');
+    const text = withImages ? await exportJsonWithImages() : $('#dataText').value;
+    download(`trades-${stamp()}.json`, text, 'application/json');
+  });
+  $('#btnDownloadCsv').addEventListener('click', () => {
+    pendingImport = null;
+    $('#dataText').value = exportCsv();
+    download(`trades-${stamp()}.csv`, '﻿' + $('#dataText').value, 'text/csv;charset=utf-8');
+  });
+  $('#btnCopyJson').addEventListener('click', () => {
+    const area = $('#dataText');
+    pendingImport = null;
+    area.value = exportJson();
+    const fallback = () => { area.focus(); area.select(); setStatus('Текст выделен — нажмите Ctrl+C (⌘C), чтобы скопировать.'); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(area.value).then(() => setStatus('JSON скопирован в буфер обмена.'), fallback);
+    } else fallback();
+  });
+  $('#importFile').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result).replace(/^﻿/, '');
+      if (text.length > 200000) {
+        pendingImport = text;
+        $('#dataText').value = '';
+        setStatus(`Файл «${file.name}» прочитан (${nf1.format(text.length / 1048576)} МБ). Выберите, добавить сделки к журналу или заменить его.`);
+      } else {
+        pendingImport = null;
+        $('#dataText').value = text;
+        setStatus(`Файл «${file.name}» прочитан. Выберите, добавить сделки к журналу или заменить его.`);
+      }
+    };
+    reader.onerror = () => setStatus('Не удалось прочитать файл.', true);
+    reader.readAsText(file);
+    e.target.value = '';
+  });
+  $('#btnImportAdd').addEventListener('click', () => doImport('add'));
+  $('#btnImportReplace').addEventListener('click', () => doImport('replace'));
+
+  // ---------- Screenshots ----------
+
+  // Images live in IndexedDB (localStorage is too small); a Map keeps them for the session if IndexedDB is unavailable.
+  const imageStore = (() => {
+    const memory = new Map();
+    let dbPromise = null;
+    function open() {
+      if (!dbPromise) {
+        dbPromise = new Promise((resolve, reject) => {
+          const req = indexedDB.open('trades-tracker', 1);
+          req.onupgradeneeded = () => req.result.createObjectStore('images');
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        }).catch(() => null);
+      }
+      return dbPromise;
+    }
+    async function run(mode, op) {
+      const db = await open();
+      if (!db) return undefined;
+      return new Promise((resolve, reject) => {
+        const req = op(db.transaction('images', mode).objectStore('images'));
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+    return {
+      async put(id, blob) {
+        memory.set(id, blob);
+        try { await run('readwrite', (st) => st.put(blob, id)); } catch (e) { /* kept in memory only */ }
+      },
+      async get(id) {
+        if (memory.has(id)) return memory.get(id);
+        try {
+          const blob = await run('readonly', (st) => st.get(id));
+          if (blob) memory.set(id, blob);
+          return blob || null;
+        } catch (e) { return null; }
+      },
+      async del(id) {
+        memory.delete(id);
+        try { await run('readwrite', (st) => st.delete(id)); } catch (e) { /* nothing to delete */ }
+      },
+      async keys() {
+        let stored = [];
+        try { stored = (await run('readonly', (st) => st.getAllKeys())) || []; } catch (e) { /* memory only */ }
+        return [...new Set([...stored.map(String), ...memory.keys()])];
+      },
+    };
+  })();
+
+  const urlCache = new Map();
+  async function imageUrl(id) {
+    if (urlCache.has(id)) return urlCache.get(id);
+    const blob = await imageStore.get(id);
+    if (!blob) return null;
+    const url = URL.createObjectURL(blob);
+    urlCache.set(id, url);
+    return url;
+  }
+
+  // Drops screenshots no trade points to any more (removed in the form, deleted or replaced trades).
+  async function gcImages() {
+    const used = new Set(state.trades.flatMap((t) => t.images || []));
+    for (const id of await imageStore.keys()) {
+      if (used.has(id)) continue;
+      await imageStore.del(id);
+      if (urlCache.has(id)) { URL.revokeObjectURL(urlCache.get(id)); urlCache.delete(id); }
+    }
+  }
+
+  function loadImage(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('bad image'));
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+  // Screenshots are scaled to 1920px on the long side and re-encoded, which keeps a 4K PNG near a few hundred KB.
+  async function compressImage(file) {
+    const src = await loadImage(file);
+    const w0 = src.naturalWidth, h0 = src.naturalHeight;
+    const scale = Math.min(1, 1920 / Math.max(w0, h0));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(w0 * scale);
+    canvas.height = Math.round(h0 * scale);
+    canvas.getContext('2d').drawImage(src, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(src.src);
+    const encode = (type) => new Promise((resolve) => canvas.toBlob(resolve, type, 0.85));
+    let blob = await encode('image/webp');
+    if (!blob || blob.type !== 'image/webp') blob = await encode('image/jpeg');
+    if (!blob) throw new Error('encode failed');
+    return blob.size < file.size ? blob : file;
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(blob);
+    });
+  }
+
+  function dataUrlToBlob(url) {
+    const m = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=\s]+)$/.exec(String(url));
+    if (!m) return null;
+    try {
+      const bin = atob(m[2].replace(/\s/g, ''));
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new Blob([bytes], { type: m[1] });
+    } catch (e) { return null; }
+  }
+
+  function showFormError(msg) {
+    const el = $('#formError');
+    el.textContent = msg;
+    el.hidden = false;
+  }
+
+  async function addImages(fileList) {
+    const files = [...fileList].filter((f) => f.type.startsWith('image/'));
+    if (!files.length) { showFormError('Можно добавить только картинки: PNG, JPG или WebP.'); return; }
+    for (const f of files) {
+      try {
+        const blob = await compressImage(f);
+        const id = 'img_' + uid();
+        await imageStore.put(id, blob);
+        formImages.push(id);
+      } catch (e) {
+        showFormError(`Не удалось прочитать картинку «${f.name}».`);
+      }
+    }
+    renderFormShots();
+  }
+
+  function renderFormShots() {
+    const box = $('#formShots');
+    box.innerHTML = formImages.map((id, i) => `
+      <div class="shot" data-id="${escapeHtml(id)}">
+        <button type="button" class="open" data-index="${i}" aria-label="Открыть скриншот ${i + 1}"><span class="missing">Загрузка…</span></button>
+        <button type="button" class="remove" data-remove="${escapeHtml(id)}" aria-label="Убрать скриншот ${i + 1}">✕</button>
+      </div>`).join('');
+    box.querySelectorAll('.shot').forEach(async (el) => {
+      const url = await imageUrl(el.dataset.id);
+      const btn = el.querySelector('.open');
+      btn.innerHTML = url ? `<img src="${url}" alt="">` : '<span class="missing">Скриншот на другом устройстве</span>';
+    });
+  }
+
+  $('#formShots').addEventListener('click', (e) => {
+    const rm = e.target.closest('[data-remove]');
+    if (rm) {
+      formImages = formImages.filter((x) => x !== rm.dataset.remove);
+      renderFormShots();
+      return;
+    }
+    const open = e.target.closest('[data-index]');
+    if (open) openLightbox(formImages, Number(open.dataset.index), form.elements.symbol.value.trim().toUpperCase());
+  });
+  $('#shotInput').addEventListener('change', (e) => { addImages(e.target.files); e.target.value = ''; });
+  tradeDialog.addEventListener('paste', (e) => {
+    const files = [...((e.clipboardData && e.clipboardData.files) || [])].filter((f) => f.type.startsWith('image/'));
+    if (!files.length) return;
+    e.preventDefault();
+    addImages(files);
+  });
+  const dropzone = $('#dropzone');
+  const hasFiles = (e) => e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+  form.addEventListener('dragover', (e) => { if (!hasFiles(e)) return; e.preventDefault(); dropzone.classList.add('over'); });
+  form.addEventListener('dragleave', (e) => { if (!form.contains(e.relatedTarget)) dropzone.classList.remove('over'); });
+  form.addEventListener('drop', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dropzone.classList.remove('over');
+    addImages(e.dataTransfer.files);
+  });
+
+  // ---------- Screenshot viewer ----------
+
+  const lightbox = $('#lightbox');
+  let lb = { ids: [], i: 0, title: '' };
+
+  function openLightbox(ids, i, title) {
+    if (!ids || !ids.length) return;
+    lb = { ids: [...ids], i, title };
+    showLightboxImage();
+    if (!lightbox.open) lightbox.showModal();
+  }
+
+  async function showLightboxImage() {
+    const { ids, i, title } = lb;
+    $('#lbTitle').textContent = `${title ? `${title} · ` : ''}скриншот ${i + 1} из ${ids.length}`;
+    $('#lbPrev').hidden = $('#lbNext').hidden = ids.length < 2;
+    const url = await imageUrl(ids[i]);
+    if (lb.ids !== ids || lb.i !== i) return;
+    $('#lbBox').innerHTML = url
+      ? `<img src="${url}" alt="${escapeHtml(`Скриншот ${i + 1}${title ? ` по ${title}` : ''}`)}">`
+      : '<p class="muted">Этот скриншот добавлен на другом устройстве и здесь недоступен. Перенесите его JSON-файлом из «Импорт / экспорт».</p>';
+  }
+
+  function stepLightbox(d) {
+    lb.i = (lb.i + d + lb.ids.length) % lb.ids.length;
+    showLightboxImage();
+  }
+  $('#lbPrev').addEventListener('click', () => stepLightbox(-1));
+  $('#lbNext').addEventListener('click', () => stepLightbox(1));
+  lightbox.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft') stepLightbox(-1);
+    if (e.key === 'ArrowRight') stepLightbox(1);
+  });
+
+  // ---------- Sync (private GitHub Gist) ----------
+
+  const SYNC_KEY = 'trades-tracker:sync';
+  const GIST_FILE = 'trades-tracker.json';
+  const sync = (() => { try { return JSON.parse(localStorage.getItem(SYNC_KEY)) || {}; } catch (e) { return {}; } })();
+  const saveSync = () => { try { localStorage.setItem(SYNC_KEY, JSON.stringify(sync)); } catch (e) { /* storage unavailable */ } };
+
+  class SyncError extends Error {
+    constructor(message, status) { super(message); this.status = status; }
+  }
+
+  async function gh(path, opts = {}) {
+    let res;
+    try {
+      res = await fetch(`https://api.github.com${path}`, {
+        ...opts,
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${sync.token}`,
+          'X-GitHub-Api-Version': '2022-11-28',
+          ...(opts.body ? { 'Content-Type': 'application/json' } : {}),
+        },
+      });
+    } catch (e) {
+      throw new SyncError('Нет связи с GitHub. Проверьте интернет. В предпросмотре на claude.ai синхронизация не работает: откройте сайт по адресу GitHub Pages.');
+    }
+    if (res.status === 401) throw new SyncError('GitHub не принял токен: он неверный или истёк. Создайте новый и подключите его снова.', 401);
+    if (res.status === 403) throw new SyncError('GitHub отказал в доступе. Проверьте, что у токена есть право Gists: Read and write, или повторите через несколько минут.', 403);
+    if (res.status === 404) throw new SyncError('GitHub не нашёл gist. Проверьте, что у токена есть право Gists: Read and write.', 404);
+    if (!res.ok) throw new SyncError(`GitHub ответил ошибкой ${res.status}. Повторите позже.`, res.status);
+    return res.json();
+  }
+
+  function localDoc() {
+    return {
+      currency: state.currency,
+      currencyAt: state.currencyAt || 0,
+      trades: state.sample ? [] : state.trades,
+      deleted: state.deleted || {},
+    };
+  }
+
+  function signature(d) {
+    const trades = d.trades.map((t) => `${t.id}@${t.updatedAt || 0}`).sort();
+    const deleted = Object.entries(d.deleted).map(([id, ts]) => `${id}@${ts}`).sort();
+    return JSON.stringify([d.currency, d.currencyAt || 0, trades, deleted]);
+  }
+
+  // Per trade, the latest edit wins; a deletion wins over any edit made before it.
+  function mergeDocs(a, b) {
+    const deleted = { ...a.deleted };
+    for (const [id, ts] of Object.entries(b.deleted)) deleted[id] = Math.max(deleted[id] || 0, Number(ts) || 0);
+    const byId = new Map();
+    for (const t of [...a.trades, ...b.trades]) {
+      const cur = byId.get(t.id);
+      if (!cur || (t.updatedAt || 0) > (cur.updatedAt || 0)) byId.set(t.id, t);
+    }
+    const trades = [...byId.values()].filter((t) => !(deleted[t.id] >= (t.updatedAt || 0)));
+    const cur = (b.currencyAt || 0) > (a.currencyAt || 0) ? b : a;
+    return { currency: cur.currency, currencyAt: cur.currencyAt || 0, trades, deleted };
+  }
+
+  function applyDoc(d) {
+    if (signature(d) === signature(localDoc())) return;
+    state.deleted = d.deleted;
+    state.currency = CURRENCY_SIGNS[d.currency] ? d.currency : state.currency;
+    state.currencyAt = d.currencyAt;
+    if (!state.sample || d.trades.length) {
+      if (state.sample) resetView();
+      state.trades = d.trades;
+      state.sample = false;
+    }
+    saveState();
+    render();
+  }
+
+  async function pullGist() {
+    const g = await gh(`/gists/${encodeURIComponent(sync.gistId)}`);
+    const f = g.files && g.files[GIST_FILE];
+    if (!f) return null;
+    let text = f.content;
+    if (f.truncated) {
+      const r = await fetch(f.raw_url).catch(() => null);
+      if (!r || !r.ok) throw new SyncError('Не удалось скачать журнал из gist. Повторите позже.');
+      text = await r.text();
+    }
+    let d;
+    try { d = JSON.parse(text); } catch (e) { throw new SyncError('Файл журнала в gist повреждён. Исправьте или удалите его на gist.github.com.'); }
+    return {
+      currency: d.currency || 'USD',
+      currencyAt: Number(d.currencyAt) || 0,
+      trades: (Array.isArray(d.trades) ? d.trades : []).map(normalizeTrade).filter(Boolean),
+      deleted: d.deleted && typeof d.deleted === 'object' ? d.deleted : {},
+    };
+  }
+
+  async function findGist() {
+    for (let page = 1; page <= 10; page++) {
+      const list = await gh(`/gists?per_page=100&page=${page}`);
+      const hit = list.find((g) => g.files && g.files[GIST_FILE]);
+      if (hit) return hit.id;
+      if (list.length < 100) break;
+    }
+    return null;
+  }
+
+  async function runSync() {
+    setSyncStatus('busy', 'Синхронизация…');
+    try {
+      let remote = null;
+      if (sync.gistId) {
+        try { remote = await pullGist(); } catch (e) { if (e.status === 404) sync.gistId = null; else throw e; }
+      }
+      if (!sync.gistId) {
+        sync.gistId = await findGist();
+        if (sync.gistId) remote = await pullGist();
+      }
+      applyDoc(remote ? mergeDocs(localDoc(), remote) : localDoc());
+      const out = localDoc();
+      const body = { files: { [GIST_FILE]: { content: JSON.stringify({ app: 'trades-tracker', version: 1, ...out }) } } };
+      if (!sync.gistId) {
+        const g = await gh('/gists', { method: 'POST', body: JSON.stringify({ description: 'Trades Tracker: журнал сделок', public: false, ...body }) });
+        sync.gistId = g.id;
+      } else if (!remote || signature(out) !== signature(remote)) {
+        await gh(`/gists/${encodeURIComponent(sync.gistId)}`, { method: 'PATCH', body: JSON.stringify(body) });
+      }
+      sync.lastSync = Date.now();
+      sync.error = '';
+      saveSync();
+      setSyncStatus('ok');
+      return true;
+    } catch (e) {
+      sync.error = e instanceof SyncError ? e.message : `Не удалось синхронизировать: ${e.message}`;
+      saveSync();
+      setSyncStatus('error');
+      return false;
+    }
+  }
+
+  let syncRunning = null, syncQueued = false, syncTimer = null;
+  function syncNow() {
+    if (!sync.token) return Promise.resolve(false);
+    if (syncRunning) { syncQueued = true; return syncRunning; }
+    syncRunning = runSync().finally(() => {
+      syncRunning = null;
+      if (syncQueued) { syncQueued = false; syncNow(); }
+    });
+    return syncRunning;
+  }
+
+  function scheduleSync() {
+    if (!sync.token) return;
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(syncNow, 1500);
+  }
+
+  function syncSummary() {
+    if (!sync.token) return 'Синхронизация не настроена.';
+    if (sync.error) return sync.error;
+    return sync.lastSync ? `Синхронизировано ${fmtDate(localIso(new Date(sync.lastSync)))}.` : 'Подключено.';
+  }
+
+  function setSyncStatus(kind, text) {
+    const msg = text || syncSummary();
+    $('#syncDot').className = `sync-dot${sync.token ? ` ${kind}` : ''}`;
+    $('#btnSync').title = msg;
+    const line = $('#syncStatus');
+    line.textContent = msg;
+    line.classList.toggle('error', kind === 'error');
+    $('#syncSetup').hidden = !!sync.token;
+    $('#syncConnected').hidden = !sync.token;
+    const link = $('#syncGistLink');
+    link.textContent = sync.gistId ? sync.gistId.slice(0, 8) + '…' : '(создаётся)';
+    link.href = sync.gistId ? `https://gist.github.com/${encodeURIComponent(sync.gistId)}` : 'https://gist.github.com/';
+  }
+
+  $('#btnSync').addEventListener('click', () => {
+    setSyncStatus(sync.token ? (sync.error ? 'error' : 'ok') : 'off');
+    $('#syncDialog').showModal();
+  });
+  $('#btnSyncConnect').addEventListener('click', async () => {
+    const token = $('#syncToken').value.trim();
+    if (!token) { setSyncStatus('error', 'Вставьте токен GitHub.'); return; }
+    Object.assign(sync, { token, gistId: null, lastSync: 0, error: '' });
+    $('#btnSyncConnect').disabled = true;
+    const ok = await syncNow();
+    $('#btnSyncConnect').disabled = false;
+    if (!ok) {
+      const msg = sync.error;
+      Object.assign(sync, { token: '', gistId: null, error: '' });
+      saveSync();
+      setSyncStatus('error', msg);
+      return;
+    }
+    $('#syncToken').value = '';
+    toast('Синхронизация подключена');
+  });
+  $('#btnSyncNow').addEventListener('click', () => syncNow());
+  $('#btnSyncDisconnect').addEventListener('click', () => {
+    Object.assign(sync, { token: '', gistId: null, lastSync: 0, error: '' });
+    saveSync();
+    setSyncStatus('off', 'Отключено. Журнал остался на этом устройстве и в gist.');
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && sync.token && Date.now() - (sync.lastSync || 0) > 20000) syncNow();
+  });
+
+  // ---------- Toast ----------
+
+  let toastTimer;
+  function toast(msg) {
+    const el = $('#toast');
+    el.textContent = msg;
+    el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.hidden = true; }, 2400);
+  }
+
+  render();
+  setSyncStatus(sync.error ? 'error' : 'ok');
+  gcImages();
+  if (sync.token) syncNow();
+})();
+</script>
+</body>
+</html>
