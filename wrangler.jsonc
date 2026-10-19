@@ -1,0 +1,8 @@
+// Cloudflare deploy config: the site is plain static files from dist/ (built by `npm run build`).
+{
+  "name": "trades-tracker",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./dist"
+  }
+}
