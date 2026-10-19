@@ -126,6 +126,26 @@ main.wrap { display: flex; flex-direction: column; gap: 20px; padding-block: 20p
 }
 .notice p { margin: 0; flex: 1 1 280px; }
 
+/* Account bar */
+.account {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px;
+  padding: 12px 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); font-size: 14px;
+}
+.account .item { display: flex; flex-direction: column; min-width: 0; }
+.account .item span { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.account .item b { font: 500 16px/1.3 var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.account .meter { width: 120px; height: 4px; margin-top: 4px; border-radius: 2px; background: var(--sunken); overflow: hidden; }
+.account .meter i { display: block; height: 100%; border-radius: 2px; background: var(--open); }
+.account .meter i.over { background: var(--loss); }
+.account .push { margin-left: auto; }
+.account p { flex: 1 1 260px; margin: 0; color: var(--muted); }
+.notice.warn { background: var(--open-soft); }
+.notice.danger { background: var(--loss-soft); }
+.sizer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 14px; border: 1px dashed var(--accent); border-radius: 8px; font-size: 14px; }
+.sizer p { flex: 1 1 220px; margin: 0; }
+.sizer b { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.form-warn { margin: 0; padding: 8px 12px; border-radius: 8px; background: var(--loss-soft); font-size: 14px; }
+
 /* Stats strip */
 .stats {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -401,6 +421,8 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     <button type="button" class="btn" id="btnClearSample">Удалить примеры и начать</button>
   </div>
 
+  <div class="notice" id="riskNotice" role="status" hidden></div>
+  <div class="account" id="account"></div>
   <dl class="stats" id="stats"></dl>
   <p class="scope" id="scope" hidden></p>
 
@@ -583,6 +605,8 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
         </div>
       </div>
     </div>
+    <div class="sizer" id="tradeSizer" hidden></div>
+    <p class="form-warn" id="formLimitWarn" hidden></p>
     <div class="preview" id="tradePreview" aria-live="polite"></div>
     <p class="form-error" id="formError" hidden></p>
     <div class="dialog-foot">
@@ -622,6 +646,41 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     </div>
     <p class="status-line" id="dataStatus" aria-live="polite"></p>
   </div>
+</dialog>
+
+<!-- Account and risk -->
+<dialog id="accountDialog" aria-labelledby="accountTitle">
+  <form id="accountForm" novalidate>
+    <div class="dialog-head">
+      <h2 id="accountTitle">Счёт и риск</h2>
+      <button type="button" class="icon-btn" data-close aria-label="Закрыть окно">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <p class="muted" style="margin:0;font-size:14px">Текущий баланс считается так: стартовый баланс плюс P&amp;L всех закрытых сделок. От него журнал считает объём позиции по риску и дневной лимит убытка.</p>
+    <div class="fields">
+      <div class="field full">
+        <label for="aBalance">Стартовый баланс счёта</label>
+        <input id="aBalance" type="number" step="any" min="0" inputmode="decimal" placeholder="например, 10000">
+        <span class="hint">Сумма на счёте до первой сделки в журнале</span>
+      </div>
+      <div class="field">
+        <label for="aRisk">Риск на сделку, %</label>
+        <input id="aRisk" type="number" step="any" min="0" max="100" inputmode="decimal" placeholder="1">
+        <span class="hint">Сколько счёта вы готовы потерять до стопа</span>
+      </div>
+      <div class="field">
+        <label for="aDaily">Дневной лимит убытка, %</label>
+        <input id="aDaily" type="number" step="any" min="0" max="100" inputmode="decimal" placeholder="3">
+        <span class="hint">Пусто — без лимита</span>
+      </div>
+    </div>
+    <p class="form-error" id="accountError" hidden></p>
+    <div class="dialog-foot">
+      <button type="button" class="btn" data-close>Отмена</button>
+      <button type="submit" class="btn primary">Сохранить</button>
+    </div>
+  </form>
 </dialog>
 
 <!-- Quick close -->
@@ -736,6 +795,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
   'use strict';
 
   const STORAGE_KEY = 'trades-tracker:v1';
+  const DEFAULT_ACCOUNT = { balance: null, riskPct: 1, dailyLossPct: 3 };
   const CURRENCY_SIGNS = { USD: '$', USDT: 'USDT', EUR: '€', RUB: '₽' };
   const CSV_FIELDS = ['id', 'symbol', 'market', 'side', 'openedAt', 'closedAt', 'entry', 'exit', 'qty', 'fees', 'stop', 'target', 'setup', 'notes'];
 
@@ -749,10 +809,10 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed && Array.isArray(parsed.trades)) return { deleted: {}, currencyAt: 0, ...parsed };
+        if (parsed && Array.isArray(parsed.trades)) return { deleted: {}, currencyAt: 0, account: { ...DEFAULT_ACCOUNT }, accountAt: 0, ...parsed };
       }
     } catch (e) { /* storage unavailable or corrupted: fall through to sample data */ }
-    return { trades: sampleTrades(), currency: 'USD', currencyAt: 0, sample: true, deleted: {} };
+    return { trades: sampleTrades(), currency: 'USD', currencyAt: 0, sample: true, deleted: {}, account: { ...DEFAULT_ACCOUNT }, accountAt: 0 };
   }
 
   function saveState() {
@@ -966,6 +1026,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     const base = filtered({ ignoreDay: true });
     const list = ui.day ? filtered() : base;
     const stats = computeStats(list);
+    renderAccount();
     renderStats(stats);
     renderEquity(stats.curve);
     renderBreakdown(list);
@@ -988,6 +1049,107 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     $('#symbolList').innerHTML = uniq('symbol').map((s) => `<option value="${escapeHtml(s)}">`).join('');
     $('#setupList').innerHTML = uniq('setup').map((s) => `<option value="${escapeHtml(s)}">`).join('');
   }
+
+  // ---------- Account and risk ----------
+
+  function normalizeAccount(a) {
+    const num = (v, lo, hi) => { const n = toNum(v); return n === null || n < lo || n > hi ? null : n; };
+    return { balance: num(a && a.balance, 0, Infinity), riskPct: num(a && a.riskPct, 0, 100), dailyLossPct: num(a && a.dailyLossPct, 0, 100) };
+  }
+
+  // Balance figures always use the whole journal: the account does not shrink when the table is filtered.
+  function accountFigures() {
+    const a = state.account || DEFAULT_ACCOUNT;
+    if (a.balance === null || a.balance === undefined) return null;
+    const today = localIso(new Date()).slice(0, 10);
+    let realized = 0, before = 0, todayPnl = 0, todayTrades = 0;
+    for (const t of state.trades) {
+      const c = calc(t);
+      if (!c.closed) continue;
+      realized += c.pnl;
+      if (dayOf(t) < today) before += c.pnl;
+      else if (dayOf(t) === today) { todayPnl += c.pnl; todayTrades += 1; }
+    }
+    const balance = a.balance + realized;
+    const dayStart = a.balance + before;
+    const limit = a.dailyLossPct ? (dayStart * a.dailyLossPct) / 100 : null;
+    const used = limit && todayPnl < 0 ? -todayPnl / limit : 0;
+    return { start: a.balance, balance, growth: a.balance ? (realized / a.balance) * 100 : null, riskPct: a.riskPct, riskAmount: a.riskPct ? (balance * a.riskPct) / 100 : null, todayPnl, todayTrades, limit, used };
+  }
+
+  function renderAccount() {
+    const box = $('#account');
+    const f = accountFigures();
+    const notice = $('#riskNotice');
+    if (!f) {
+      box.innerHTML = '<p>Укажите баланс счёта, чтобы видеть его рост, считать объём позиции по риску и следить за дневным лимитом убытка.</p><button type="button" class="btn push" data-account>Указать баланс</button>';
+      notice.hidden = true;
+      return;
+    }
+    const meter = f.limit ? `<span class="meter" aria-hidden="true"><i class="${f.used >= 1 ? 'over' : ''}" style="width:${Math.min(100, f.used * 100).toFixed(0)}%"></i></span>` : '';
+    box.innerHTML = `
+      <div class="item"><span>Баланс</span><b>${escapeHtml(money(f.balance, { sign: false }))}</b></div>
+      <div class="item"><span>С начала</span><b class="${tone(f.growth)}">${pct(f.growth)}</b></div>
+      <div class="item"><span>Сегодня</span><b class="${tone(f.todayPnl)}">${f.todayTrades ? escapeHtml(money(f.todayPnl)) : '—'}</b>${meter}</div>
+      <div class="item"><span>Риск на сделку</span><b>${f.riskAmount === null ? '—' : `${nf1.format(f.riskPct)}% · ${escapeHtml(money(f.riskAmount, { sign: false }))}`}</b></div>
+      <button type="button" class="btn push" data-account>Настроить</button>`;
+    if (f.limit && f.used >= 0.8) {
+      const over = f.used >= 1;
+      notice.className = `notice ${over ? 'danger' : 'warn'}`;
+      notice.innerHTML = `<p>${over ? '<b>Дневной лимит убытка достигнут.</b>' : '<b>Почти дневной лимит убытка.</b>'} Сегодня ${escapeHtml(money(f.todayPnl))} при лимите ${escapeHtml(money(-f.limit))} (${nf1.format(state.account.dailyLossPct)}% счёта).${over ? ' Лучше остановиться на сегодня.' : ''}</p>`;
+      notice.hidden = false;
+    } else {
+      notice.hidden = true;
+    }
+  }
+
+  // Rounded down, so the suggested size never risks more than planned.
+  function roundQty(q) {
+    if (q >= 100) return Math.floor(q);
+    if (q >= 1) return Math.floor(q * 100) / 100;
+    const digits = Math.max(2, 3 - Math.floor(Math.log10(q)));
+    const f = 10 ** digits;
+    return Math.floor(q * f) / f;
+  }
+
+  const accountDialog = $('#accountDialog');
+  const accountForm = $('#accountForm');
+
+  function openAccountDialog() {
+    const a = state.account || DEFAULT_ACCOUNT;
+    $('#aBalance').value = a.balance ?? '';
+    $('#aRisk').value = a.riskPct ?? '';
+    $('#aDaily').value = a.dailyLossPct ?? '';
+    $('#accountError').hidden = true;
+    accountDialog.showModal();
+    $('#aBalance').focus();
+  }
+
+  accountForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const raw = { balance: $('#aBalance').value, riskPct: $('#aRisk').value, dailyLossPct: $('#aDaily').value };
+    const a = normalizeAccount(raw);
+    const bad = (key) => String(raw[key]).trim() !== '' && a[key] === null;
+    const err = bad('balance') ? 'Баланс должен быть числом не меньше нуля.'
+      : bad('riskPct') ? 'Риск на сделку должен быть от 0 до 100%.'
+      : bad('dailyLossPct') ? 'Дневной лимит должен быть от 0 до 100%.' : null;
+    if (err) {
+      $('#accountError').textContent = err;
+      $('#accountError').hidden = false;
+      return;
+    }
+    state.account = a;
+    state.accountAt = Date.now();
+    commit();
+    accountDialog.close();
+    render();
+    if (tradeDialog.open) updatePreview();
+    toast('Настройки счёта сохранены');
+  });
+
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('[data-account]')) openAccountDialog();
+  });
 
   function renderStats(s) {
     const pf = s.profitFactor === null ? '—' : s.profitFactor === Infinity ? '∞' : nf2.format(s.profitFactor);
@@ -1429,8 +1591,44 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     };
   }
 
+  function updateSizer(t) {
+    const box = $('#tradeSizer');
+    const f = accountFigures();
+    const stopDist = t.entry !== null && t.stop !== null ? Math.abs(t.entry - t.stop) : 0;
+    if (t.exit !== null || !stopDist) { box.hidden = true; return; }
+    if (!f || !f.riskAmount) {
+      setHtml(box, '<p>Укажите баланс и риск на сделку, и журнал подскажет объём позиции по стопу.</p><button type="button" class="btn" data-account>Указать баланс</button>');
+      box.hidden = false;
+      return;
+    }
+    const qty = roundQty(f.riskAmount / stopDist);
+    const cur = t.qty !== null ? (t.qty * stopDist / f.balance) * 100 : null;
+    setHtml(box, `<p>Объём при риске ${nf1.format(f.riskPct)}% (${escapeHtml(money(f.riskAmount, { sign: false }))}): <b>${nfQty.format(qty)}</b>`
+      + `${cur !== null ? `<br><span class="muted">Сейчас риск ${nf2.format(cur)}% счёта</span>` : ''}</p>`
+      + `<button type="button" class="btn" data-qty="${qty}">Подставить</button>`);
+    box.hidden = false;
+  }
+
+  // Leaves the DOM alone when nothing changed, so a button keeps receiving the click
+  // that started while a blur re-ran the preview.
+  function setHtml(el, html) {
+    if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
+  }
+
+  $('#tradeSizer').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-qty]');
+    if (!b) return;
+    form.elements.qty.value = b.dataset.qty;
+    updatePreview();
+  });
+
   function updatePreview() {
     const t = readForm();
+    updateSizer(t);
+    const f = accountFigures();
+    const warn = $('#formLimitWarn');
+    warn.hidden = !(f && f.limit && f.used >= 1 && t.exit === null && !editingId);
+    warn.textContent = 'Сегодня дневной лимит убытка уже достигнут. Точно стоит открывать новую сделку?';
     const box = $('#tradePreview');
     if (t.entry === null || t.qty === null) {
       box.innerHTML = '<div><span>Подсказка</span>Введите цену входа и количество — здесь появится расчёт позиции, риска и результата.</div>';
@@ -1661,7 +1859,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
   const dataDialog = $('#dataDialog');
 
   function exportJson() {
-    return JSON.stringify({ app: 'trades-tracker', version: 1, exportedAt: new Date().toISOString(), currency: state.currency, trades: state.trades }, null, 2);
+    return JSON.stringify({ app: 'trades-tracker', version: 1, exportedAt: new Date().toISOString(), currency: state.currency, account: state.account, trades: state.trades }, null, 2);
   }
 
   function csvCell(v) {
@@ -1702,11 +1900,13 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     if (!trimmed) throw new Error('Вставьте текст резервной копии или выберите файл.');
     let rawList;
     let images = {};
+    let account = null;
     if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
       let data;
       try { data = JSON.parse(trimmed); } catch (e) { throw new Error('Не удалось прочитать JSON: проверьте, что текст скопирован целиком.'); }
       rawList = Array.isArray(data) ? data : data.trades;
       if (!Array.isArray(data) && data && data.images && typeof data.images === 'object') images = data.images;
+      if (!Array.isArray(data) && data && data.account && typeof data.account === 'object') account = normalizeAccount(data.account);
       if (!Array.isArray(rawList)) throw new Error('В JSON нет списка сделок (ожидается поле "trades").');
     } else {
       rawList = parseCsv(trimmed);
@@ -1714,7 +1914,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     const trades = rawList.map(normalizeTrade).filter(Boolean);
     const skipped = rawList.length - trades.length;
     if (!trades.length) throw new Error('Не найдено ни одной корректной сделки. Нужны поля symbol, side, openedAt, entry и qty.');
-    return { trades, skipped, images };
+    return { trades, skipped, images, account };
   }
 
   let pendingImport = null; // large files are kept here instead of the textarea
@@ -1722,7 +1922,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
   async function doImport(mode) {
     const status = $('#dataStatus');
     try {
-      const { trades, skipped, images } = parseImport(pendingImport ?? $('#dataText').value);
+      const { trades, skipped, images, account } = parseImport(pendingImport ?? $('#dataText').value);
       const now = Date.now();
       let imageCount = 0;
       for (const [id, url] of Object.entries(images)) {
@@ -1735,6 +1935,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
           for (const t of state.trades) if (!keep.has(t.id)) state.deleted[t.id] = now;
         }
         state.trades = trades;
+        if (account) { state.account = account; state.accountAt = now; }
       } else {
         const ids = new Set(state.trades.map((t) => t.id));
         state.trades.push(...trades.map((t) => (ids.has(t.id) ? { ...t, id: uid() } : t)));
@@ -2109,6 +2310,8 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     return {
       currency: state.currency,
       currencyAt: state.currencyAt || 0,
+      account: state.account || { ...DEFAULT_ACCOUNT },
+      accountAt: state.accountAt || 0,
       trades: state.sample ? [] : state.trades,
       deleted: state.deleted || {},
     };
@@ -2117,7 +2320,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
   function signature(d) {
     const trades = d.trades.map((t) => `${t.id}@${t.updatedAt || 0}`).sort();
     const deleted = Object.entries(d.deleted).map(([id, ts]) => `${id}@${ts}`).sort();
-    return JSON.stringify([d.currency, d.currencyAt || 0, trades, deleted]);
+    return JSON.stringify([d.currency, d.currencyAt || 0, d.account || null, d.accountAt || 0, trades, deleted]);
   }
 
   // Per trade, the latest edit wins; a deletion wins over any edit made before it.
@@ -2131,7 +2334,8 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     }
     const trades = [...byId.values()].filter((t) => !(deleted[t.id] >= (t.updatedAt || 0)));
     const cur = (b.currencyAt || 0) > (a.currencyAt || 0) ? b : a;
-    return { currency: cur.currency, currencyAt: cur.currencyAt || 0, trades, deleted };
+    const acc = (b.accountAt || 0) > (a.accountAt || 0) ? b : a;
+    return { currency: cur.currency, currencyAt: cur.currencyAt || 0, account: acc.account, accountAt: acc.accountAt || 0, trades, deleted };
   }
 
   function applyDoc(d) {
@@ -2139,6 +2343,8 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     state.deleted = d.deleted;
     state.currency = CURRENCY_SIGNS[d.currency] ? d.currency : state.currency;
     state.currencyAt = d.currencyAt;
+    state.account = normalizeAccount(d.account);
+    state.accountAt = d.accountAt || 0;
     if (!state.sample || d.trades.length) {
       if (state.sample) resetView();
       state.trades = d.trades;
@@ -2163,6 +2369,8 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     return {
       currency: d.currency || 'USD',
       currencyAt: Number(d.currencyAt) || 0,
+      account: d.account ? normalizeAccount(d.account) : { ...DEFAULT_ACCOUNT },
+      accountAt: Number(d.accountAt) || 0,
       trades: (Array.isArray(d.trades) ? d.trades : []).map(normalizeTrade).filter(Boolean),
       deleted: d.deleted && typeof d.deleted === 'object' ? d.deleted : {},
     };

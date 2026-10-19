@@ -125,6 +125,31 @@ await step('analytics: sides, streaks, weekday, hours and R charts render', asyn
   assert.match(await page.textContent('#analytics .breakdown li:nth-child(1) .meta'), /нет сделок/);
 });
 
+await step('risk: balance, position size by stop and daily loss limit', async () => {
+  const page = await open({ width: 1280, height: 900 });
+  await page.click('#btnClearSample');
+  await page.click('#account [data-account]');
+  await page.fill('#aBalance', '10000');
+  await page.fill('#aRisk', '1');
+  await page.fill('#aDaily', '2');
+  await page.click('#accountForm button[type=submit]');
+  assert.match(await page.textContent('#account'), /10\s000,00/);
+
+  // 1% of 10 000 = 100; stop 5 below entry -> 20 units
+  await page.click('#btnAdd');
+  await page.fill('#tSymbol', 'eth');
+  await page.fill('#tEntry', '100');
+  await page.fill('#tStop', '95');
+  assert.match(await page.textContent('#tradeSizer'), /20/);
+  await page.click('#tradeSizer [data-qty]');
+  assert.equal(await page.inputValue('#tQty'), '20');
+  // close today at a 250 loss: beyond the 2% (200) daily limit
+  await page.fill('#tExit', '87.5');
+  await page.click('#tradeForm button[type=submit]');
+  assert.ok(await page.locator('#riskNotice.danger').isVisible(), 'daily limit notice shows');
+  assert.match(await page.textContent('#account'), /9\s750,00/);
+});
+
 await step('no script errors', async () => {
   assert.deepEqual(errors, []);
 });
