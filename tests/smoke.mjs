@@ -155,7 +155,11 @@ const fixture = (name) => path.join(root, 'tests', 'fixtures', name);
 async function importExchange(page, file) {
   await page.click('#btnData');
   await page.setInputFiles('#exFile', fixture(file));
-  await page.waitForSelector('#exPreview p');
+  // The preview first says "Читаю файл…"; wait for the parsed result, not that placeholder.
+  await page.waitForFunction(() => {
+    const p = document.querySelector('#exPreview p');
+    return p && !p.textContent.includes('Читаю');
+  });
   return page.textContent('#exPreview');
 }
 
@@ -197,7 +201,7 @@ await step('exchange import: unknown format lists the columns it found', async (
   const page = await open({ width: 1280, height: 900 });
   await page.click('#btnData');
   await page.setInputFiles('#exFile', { name: 'odd.csv', mimeType: 'text/csv', buffer: Buffer.from('Foo,Bar\n1,2\n') });
-  await page.waitForSelector('#exPreview p');
+  await page.waitForFunction(() => /Нашлись колонки/.test(document.querySelector('#exPreview').textContent));
   assert.match(await page.textContent('#exPreview'), /Нашлись колонки: Foo, Bar/);
 });
 
