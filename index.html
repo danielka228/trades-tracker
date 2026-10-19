@@ -162,6 +162,46 @@ main.wrap { display: flex; flex-direction: column; gap: 20px; padding-block: 20p
 .breakdown .bar i.pos { background: var(--profit); }
 .breakdown .bar i.neg { background: var(--loss); }
 
+/* Calendar */
+.cal-nav { display: flex; align-items: center; gap: 2px; }
+.cal-nav .month { min-width: 132px; text-align: center; font-weight: 600; }
+.cal-nav .month::first-letter { text-transform: uppercase; }
+.cal-total { font-size: 13px; color: var(--muted); margin-right: auto; }
+.cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)) minmax(0, 1fr); gap: 4px; }
+.cal .dow { padding: 0 6px 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.day {
+  display: flex; flex-direction: column; justify-content: space-between; gap: 2px;
+  min-width: 0; min-height: 70px; padding: 6px 8px;
+  border: 1px solid transparent; border-radius: 8px; background: var(--sunken); text-align: left;
+}
+.day.out { background: transparent; }
+.day.week { background: transparent; border: 1px dashed var(--line); }
+.day.win { background: var(--profit-soft); background: color-mix(in srgb, var(--profit) var(--a), var(--surface)); }
+.day.loss { background: var(--loss-soft); background: color-mix(in srgb, var(--loss) var(--a), var(--surface)); }
+button.day { cursor: pointer; }
+button.day:hover { border-color: var(--muted); }
+.day.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.day .d { font-size: 12px; color: var(--muted); }
+.day.today .d { color: var(--accent); font-weight: 600; }
+.day.win .d, .day.loss .d { color: var(--fg); }
+.day .p { font: 600 13px/1.2 var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.day.win .p, .day.loss .p { color: var(--fg); }
+.day .n { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.day.win .n, .day.loss .n { color: var(--fg); opacity: .75; }
+.cal-hint { margin: 10px 0 0; font-size: 13px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px;
+  border: 1px solid var(--accent); border-radius: 999px; background: var(--accent-soft); color: var(--fg); cursor: pointer; font-size: 14px;
+}
+.journal { scroll-margin-top: 80px; }
+@media (max-width: 560px) {
+  .cal { gap: 3px; }
+  .cal .dow { padding: 0 2px; font-size: 10px; letter-spacing: 0; }
+  .day { min-height: 50px; padding: 4px; }
+  .day .p { font-size: 10px; }
+  .day .n { display: none; }
+}
+
 /* Journal */
 .journal { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); min-width: 0; }
 .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); }
@@ -302,9 +342,28 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     </section>
   </div>
 
+  <section class="panel" aria-labelledby="calTitle">
+    <div class="panel-head">
+      <h2 id="calTitle">Календарь P&amp;L</h2>
+      <span class="cal-total" id="calTotal"></span>
+      <div class="cal-nav">
+        <button type="button" class="icon-btn" id="calPrev" aria-label="Предыдущий месяц">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></svg>
+        </button>
+        <span class="month" id="calMonth" aria-live="polite"></span>
+        <button type="button" class="icon-btn" id="calNext" aria-label="Следующий месяц">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="cal" id="calendar"></div>
+    <p class="cal-hint muted">День считается по дате закрытия сделки. Нажмите на день, чтобы показать его сделки в таблице.</p>
+  </section>
+
   <section class="journal" aria-labelledby="journalTitle">
     <div class="filters">
       <h2 id="journalTitle">Сделки</h2>
+      <button type="button" class="chip" id="dayChip" hidden></button>
       <input type="search" id="fSearch" placeholder="Тикер, сетап, заметка" aria-label="Поиск">
       <select id="fStatus" class="compact" aria-label="Статус">
         <option value="all">Все</option>
@@ -646,8 +705,11 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
   // ---------- State ----------
 
   const state = loadState();
-  const ui = { search: '', status: 'all', side: 'all', market: 'all', group: 'symbol' };
+  const ui = { search: '', status: 'all', side: 'all', market: 'all', group: 'symbol', month: null, day: null };
   let editingId = null;
+
+  // After the journal is replaced, jump the calendar to the newest data instead of a stale month.
+  function resetView() { ui.month = null; ui.day = null; }
 
   function normalizeTrade(raw) {
     const side = String(raw.side || '').toLowerCase();
@@ -673,10 +735,13 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
 
   // ---------- Filtering ----------
 
-  function filtered() {
+  const dayOf = (t) => closeTime(t).slice(0, 10);
+
+  function filtered({ ignoreDay = false } = {}) {
     const q = ui.search.trim().toLowerCase();
     return state.trades.filter((t) => {
       const c = calc(t);
+      if (!ignoreDay && ui.day && !(c.closed && dayOf(t) === ui.day)) return false;
       if (ui.side !== 'all' && t.side !== ui.side) return false;
       if (ui.market !== 'all' && t.market !== ui.market) return false;
       if (ui.status === 'open' && c.closed) return false;
@@ -687,7 +752,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
       return true;
     });
   }
-  const filtersActive = () => ui.search.trim() || ui.status !== 'all' || ui.side !== 'all' || ui.market !== 'all';
+  const filtersActive = () => ui.search.trim() || ui.status !== 'all' || ui.side !== 'all' || ui.market !== 'all' || ui.day;
 
   // ---------- Render ----------
 
@@ -696,11 +761,14 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     $('#sampleNotice').hidden = !state.sample;
     renderMarketFilter();
     renderDatalists();
-    const list = filtered();
+    const base = filtered({ ignoreDay: true });
+    const list = ui.day ? filtered() : base;
     const stats = computeStats(list);
     renderStats(stats);
     renderEquity(stats.curve);
     renderBreakdown(list);
+    renderCalendar(base);
+    renderDayChip();
     renderTable(list);
   }
 
@@ -818,6 +886,99 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
         <span class="meta">${r.n} ${plural(r.n, 'сделка', 'сделки', 'сделок')} · винрейт ${nf1.format((r.wins / r.n) * 100)}%</span>
         <span class="bar"><i class="${tone(r.pnl) || 'pos'}" style="width:${((Math.abs(r.pnl) / max) * 100).toFixed(1)}%"></i></span>
       </li>`).join('') : '<li class="muted">Пока нет закрытых сделок.</li>';
+  }
+
+  const dfMonth = new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric' });
+  const dfDayLong = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long' });
+  const WEEKDAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+  function dailyPnl(list) {
+    const byDay = new Map();
+    for (const t of list) {
+      const c = calc(t);
+      if (!c.closed) continue;
+      const d = byDay.get(dayOf(t)) || { pnl: 0, n: 0 };
+      d.pnl += c.pnl;
+      d.n += 1;
+      byDay.set(dayOf(t), d);
+    }
+    return byDay;
+  }
+
+  function shiftMonth(ym, delta) {
+    const [y, m] = ym.split('-').map(Number);
+    const d = new Date(y, m - 1 + delta, 1);
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+  }
+
+  function renderCalendar(list) {
+    const byDay = dailyPnl(list);
+    if (!ui.month) {
+      const keys = [...byDay.keys()].sort();
+      ui.month = (keys.length ? keys[keys.length - 1] : localIso(new Date())).slice(0, 7);
+    }
+    const [y, mo] = ui.month.split('-').map(Number);
+    const first = new Date(y, mo - 1, 1);
+    const daysIn = new Date(y, mo, 0).getDate();
+    const lead = (first.getDay() + 6) % 7; // weeks start on Monday
+    const today = localIso(new Date()).slice(0, 10);
+    const key = (day) => `${y}-${pad(mo)}-${pad(day)}`;
+
+    let max = 0, total = 0, trades = 0, green = 0, red = 0;
+    for (let day = 1; day <= daysIn; day++) {
+      const d = byDay.get(key(day));
+      if (!d) continue;
+      max = Math.max(max, Math.abs(d.pnl));
+      total += d.pnl; trades += d.n;
+      if (d.pnl > 0) green++; else if (d.pnl < 0) red++;
+    }
+
+    const signed = (v) => (v > 0 ? '+' : '') + shortMoney(v);
+    let html = [...WEEKDAYS, 'Неделя'].map((d) => `<div class="dow">${d}</div>`).join('');
+    let week = { pnl: 0, n: 0 };
+    const cells = Math.ceil((lead + daysIn) / 7) * 7;
+    for (let i = 0; i < cells; i++) {
+      const day = i - lead + 1;
+      if (day < 1 || day > daysIn) {
+        html += '<div class="day out" aria-hidden="true"></div>';
+      } else {
+        const k = key(day);
+        const d = byDay.get(k);
+        const isToday = k === today ? ' today' : '';
+        if (d) {
+          week.pnl += d.pnl; week.n += d.n;
+          const kind = d.pnl > 0 ? ' win' : d.pnl < 0 ? ' loss' : '';
+          const alpha = max ? Math.round(14 + (Math.abs(d.pnl) / max) * 36) : 14;
+          const label = `${dfDayLong.format(new Date(y, mo - 1, day))}: ${money(d.pnl)}, ${d.n} ${plural(d.n, 'сделка', 'сделки', 'сделок')}`;
+          html += `<button type="button" class="day${kind}${isToday}${ui.day === k ? ' selected' : ''}" data-day="${k}" style="--a:${alpha}%" aria-pressed="${ui.day === k}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">
+            <span class="d">${day}</span><span class="p ${tone(d.pnl)}">${escapeHtml(signed(d.pnl))}</span><span class="n">${d.n} ${plural(d.n, 'сделка', 'сделки', 'сделок')}</span></button>`;
+        } else {
+          html += `<div class="day${isToday}"><span class="d">${day}</span></div>`;
+        }
+      }
+      if (i % 7 === 6) {
+        html += week.n
+          ? `<div class="day week" title="${escapeHtml(`Итог недели: ${money(week.pnl)}`)}"><span class="d">Итог</span><span class="p ${tone(week.pnl)}">${escapeHtml(signed(week.pnl))}</span><span class="n">${week.n} ${plural(week.n, 'сделка', 'сделки', 'сделок')}</span></div>`
+          : '<div class="day week" aria-hidden="true"></div>';
+        week = { pnl: 0, n: 0 };
+      }
+    }
+    $('#calendar').innerHTML = html;
+    $('#calMonth').textContent = dfMonth.format(first).replace(/\s*г\.$/, '');
+    const totalEl = $('#calTotal');
+    totalEl.innerHTML = trades
+      ? `За месяц <b class="num ${tone(total)}">${escapeHtml(money(total))}</b> · ${green} ${plural(green, 'день', 'дня', 'дней')} в плюс · ${red} в минус`
+      : 'В этом месяце нет закрытых сделок';
+  }
+
+  function renderDayChip() {
+    const chip = $('#dayChip');
+    chip.hidden = !ui.day;
+    if (ui.day) {
+      const [y, m, d] = ui.day.split('-').map(Number);
+      chip.innerHTML = `${escapeHtml(dfDayLong.format(new Date(y, m - 1, d)))} <span aria-hidden="true">✕</span>`;
+      chip.setAttribute('aria-label', `Сбросить фильтр по дню ${dfDayLong.format(new Date(y, m - 1, d))}`);
+    }
   }
 
   function plural(n, one, few, many) {
@@ -969,6 +1130,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
       // The first real trade replaces the examples, so they never mix with the user's own figures.
       state.trades = [{ id: uid(), ...t }];
       state.sample = false;
+      resetView();
       toast('Сделка добавлена, примеры удалены');
     } else {
       state.trades.push({ id: uid(), ...t });
@@ -1030,11 +1192,22 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     $$('.seg button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
     render();
   }));
+  $('#calPrev').addEventListener('click', () => { ui.month = shiftMonth(ui.month, -1); render(); });
+  $('#calNext').addEventListener('click', () => { ui.month = shiftMonth(ui.month, 1); render(); });
+  $('#calendar').addEventListener('click', (e) => {
+    const cell = e.target.closest('button[data-day]');
+    if (!cell) return;
+    ui.day = ui.day === cell.dataset.day ? null : cell.dataset.day;
+    render();
+    if (ui.day) $('.journal').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+  });
+  $('#dayChip').addEventListener('click', () => { ui.day = null; render(); });
   $('#currency').addEventListener('change', (e) => { state.currency = e.target.value; saveState(); render(); });
   $('#btnAdd').addEventListener('click', () => openTradeForm(null));
   $('#btnClearSample').addEventListener('click', () => {
     state.trades = [];
     state.sample = false;
+    resetView();
     saveState();
     render();
     toast('Примеры удалены — журнал готов к работе');
@@ -1119,6 +1292,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
         state.trades.push(...trades.map((t) => (ids.has(t.id) ? { ...t, id: uid() } : t)));
       }
       state.sample = false;
+      resetView();
       saveState();
       render();
       dataDialog.close();
