@@ -319,6 +319,31 @@ td.note { max-width: 220px; overflow: hidden; text-overflow: ellipsis; color: va
 .small-note { margin: 0; font-size: 13px; color: var(--muted); }
 .check { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
 
+/* Tags */
+.tag-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag-chip {
+  min-height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--bg); color: var(--muted); font-size: 13px; cursor: pointer;
+}
+.tag-chip[aria-pressed="true"] { border-color: var(--loss); background: var(--loss-soft); color: var(--fg); }
+.tag-chip.good[aria-pressed="true"] { border-color: var(--profit); background: var(--profit-soft); }
+.tag-add { display: flex; gap: 6px; margin-top: 6px; }
+.tag-add input { flex: 1 1 auto; min-width: 0; }
+.rating { display: flex; gap: 6px; }
+.rating input { position: absolute; opacity: 0; pointer-events: none; }
+.rating label {
+  display: grid; place-items: center; width: 40px; height: 36px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg); color: var(--muted); font-weight: 600; cursor: pointer;
+}
+.rating input:checked + label { border-color: var(--accent); background: var(--accent-soft); color: var(--fg); }
+.rating input:focus-visible + label { outline: 2px solid var(--accent); outline-offset: 2px; }
+td .tags { display: block; font-size: 12px; color: var(--loss); }
+td .tags.good { color: var(--profit); }
+.an-card.wide { grid-column: 1 / -1; }
+.an-card.wide .breakdown { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 24px; }
+.tag-link { padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 500; text-align: left; cursor: pointer; }
+.tag-link:hover { text-decoration: underline; }
+
 /* Quick close */
 .btn-close-pos {
   min-height: 28px; padding: 0 10px; margin-right: 4px;
@@ -602,6 +627,25 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
         <datalist id="setupList"></datalist>
       </div>
       <div class="field full">
+        <span class="label" id="tagsLabel">Ошибки и эмоции</span>
+        <div class="tag-chips" id="tagChips" role="group" aria-labelledby="tagsLabel"></div>
+        <div class="tag-add">
+          <input id="tTagNew" autocomplete="off" placeholder="Своя метка" aria-label="Своя метка">
+          <button type="button" class="btn" id="btnTagAdd">Добавить</button>
+        </div>
+      </div>
+      <div class="field full">
+        <span class="label" id="ratingLabel">Насколько по плану</span>
+        <div class="rating" role="radiogroup" aria-labelledby="ratingLabel">
+          <input type="radio" id="tRate1" name="rating" value="1"><label for="tRate1">1</label>
+          <input type="radio" id="tRate2" name="rating" value="2"><label for="tRate2">2</label>
+          <input type="radio" id="tRate3" name="rating" value="3"><label for="tRate3">3</label>
+          <input type="radio" id="tRate4" name="rating" value="4"><label for="tRate4">4</label>
+          <input type="radio" id="tRate5" name="rating" value="5"><label for="tRate5">5</label>
+        </div>
+        <span class="hint">1 — совсем не по плану, 5 — всё по плану. Можно не заполнять.</span>
+      </div>
+      <div class="field full">
         <label for="tNotes">Заметки</label>
         <textarea id="tNotes" name="notes" placeholder="Почему вошёл, что пошло не так, эмоции"></textarea>
       </div>
@@ -816,7 +860,9 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
   const STORAGE_KEY = 'trades-tracker:v1';
   const DEFAULT_ACCOUNT = { balance: null, riskPct: 1, dailyLossPct: 3 };
   const CURRENCY_SIGNS = { USD: '$', USDT: 'USDT', EUR: '€', RUB: '₽' };
-  const CSV_FIELDS = ['id', 'symbol', 'market', 'side', 'openedAt', 'closedAt', 'entry', 'exit', 'qty', 'fees', 'stop', 'target', 'setup', 'notes'];
+  const CSV_FIELDS = ['id', 'symbol', 'market', 'side', 'openedAt', 'closedAt', 'entry', 'exit', 'qty', 'fees', 'stop', 'target', 'setup', 'tags', 'rating', 'notes'];
+  const GOOD_TAG = 'По плану';
+  const PRESET_TAGS = [GOOD_TAG, 'FOMO', 'Ранний вход', 'Поздний вход', 'Ранний выход', 'Передвинул стоп', 'Без стопа', 'Месть рынку', 'Пересидел убыток', 'Большой объём', 'Скука', 'Усталость'];
 
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -972,11 +1018,17 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
       ['SOLUSDT', 'Крипто', 'long', 2, 12, 0, null, null, null, 151.6, null, 40, 2.4, 147, 165, 'Пробой уровня', 'Позиция открыта, стоп в безубыток после 158.'],
       ['AAPL', 'Акции', 'long', 1, 17, 30, null, null, null, 233.1, null, 30, 1, 229.5, 240, 'Отскок от EMA', ''],
     ];
-    return rows.map(([symbol, market, side, od, oh, om, cd, ch, cm, entry, exit, qty, fees, stop, target, setup, notes]) => ({
+    const SAMPLE_TAGS = [
+      [['По плану'], 4], [['Передвинул стоп'], 2], [['По плану'], 5], [['FOMO', 'Ранний вход'], 2], [['По плану'], 4],
+      [['По плану'], 5], [['Месть рынку', 'FOMO'], 1], [['Ранний выход'], 3], [['По плану'], 4], [['Ранний вход'], 2],
+    ];
+    return rows.map(([symbol, market, side, od, oh, om, cd, ch, cm, entry, exit, qty, fees, stop, target, setup, notes], i) => ({
       id: uid(), symbol, market, side,
       openedAt: at(od, oh, om),
       closedAt: cd === null ? '' : at(cd, ch, cm),
       entry, exit, qty, fees, stop, target, setup, notes,
+      tags: SAMPLE_TAGS[i] ? SAMPLE_TAGS[i][0] : [],
+      rating: SAMPLE_TAGS[i] ? SAMPLE_TAGS[i][1] : null,
     }));
   }
 
@@ -989,6 +1041,12 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
 
   // After the journal is replaced, jump the calendar to the newest data instead of a stale month.
   function resetView() { ui.month = null; ui.day = null; }
+
+  // Tags come as an array from JSON and as "FOMO, Ранний выход" from CSV.
+  function normalizeTags(v) {
+    const list = Array.isArray(v) ? v : String(v ?? '').split(/[,;|]/);
+    return [...new Set(list.map((x) => String(x).trim()).filter(Boolean))].slice(0, 20);
+  }
 
   function normalizeTrade(raw) {
     const side = String(raw.side || '').toLowerCase();
@@ -1008,6 +1066,8 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
       setup: String(raw.setup || '').trim(),
       notes: String(raw.notes || '').trim(),
       images: Array.isArray(raw.images) ? raw.images.map(String) : [],
+      tags: normalizeTags(raw.tags),
+      rating: [1, 2, 3, 4, 5].includes(Number(raw.rating)) ? Number(raw.rating) : null,
       updatedAt: Number(raw.updatedAt) || 0,
     };
     if (!t.symbol || t.entry === null || t.qty === null || !t.openedAt) return null;
@@ -1029,7 +1089,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
       if (ui.status === 'closed' && !c.closed) return false;
       if (ui.status === 'win' && !(c.closed && c.pnl > 0)) return false;
       if (ui.status === 'loss' && !(c.closed && c.pnl < 0)) return false;
-      if (q && !`${t.symbol} ${t.setup} ${t.notes} ${t.market}`.toLowerCase().includes(q)) return false;
+      if (q && !`${t.symbol} ${t.setup} ${t.notes} ${t.market} ${(t.tags || []).join(' ')}`.toLowerCase().includes(q)) return false;
       return true;
     });
   }
@@ -1401,7 +1461,39 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
         + `<p class="an-note">Медиана <b class="num">${rmult(median)}</b> · сделок со стопом: ${rs.length} из ${closed.length}</p>`;
     }
 
-    const card = (title, body) => `<div class="an-card"><h3>${title}</h3>${body}</div>`;
+    // Mistakes: what each tag cost, and trades by plan against the rest
+    const tagged = closed.filter((x) => (x.t.tags || []).length);
+    let mistakesHtml;
+    if (!tagged.length) {
+      mistakesHtml = '<p class="an-note">Отмечайте в сделках ошибки и эмоции (FOMO, ранний выход, передвинутый стоп), и здесь появится, сколько каждая из них стоит.</p>';
+    } else {
+      const byTag = new Map();
+      for (const x of tagged) {
+        for (const tag of x.t.tags) {
+          if (tag === GOOD_TAG) continue;
+          const g = byTag.get(tag) || { name: tag, n: 0, wins: 0, pnl: 0 };
+          g.n += 1; g.pnl += x.c.pnl; if (x.c.pnl > 0) g.wins += 1;
+          byTag.set(tag, g);
+        }
+      }
+      const rows = [...byTag.values()].sort((a, b) => a.pnl - b.pnl);
+      const max = Math.max(1e-9, ...rows.map((r) => Math.abs(r.pnl)));
+      const group = (xs) => ({ n: xs.length, pnl: xs.reduce((a, x) => a + x.c.pnl, 0), wins: xs.filter((x) => x.c.pnl > 0).length });
+      const plan = group(closed.filter((x) => (x.t.tags || []).includes(GOOD_TAG)));
+      const errs = group(closed.filter((x) => (x.t.tags || []).some((tag) => tag !== GOOD_TAG)));
+      const line = (label, g) => g.n ? `${label}: <b>${nTrades(g.n)}</b>, <span class="num ${tone(g.pnl)}">${escapeHtml(money(g.pnl))}</span>, винрейт ${nf1.format((g.wins / g.n) * 100)}%` : `${label}: нет сделок`;
+      const rated = closed.filter((x) => x.t.rating);
+      mistakesHtml = `<p class="an-note">${line('По плану', plan)} · ${line('С ошибками', errs)}${rated.length ? ` · средняя оценка плана <b>${nf1.format(rated.reduce((a, x) => a + x.t.rating, 0) / rated.length)}</b> из 5` : ''}</p>`
+        + (rows.length ? `<ul class="breakdown">${rows.map((r) => `
+          <li>
+            <button type="button" class="tag-link name" data-filter-tag="${escapeHtml(r.name)}" title="Показать эти сделки">${escapeHtml(r.name)}</button>
+            <span class="val num ${tone(r.pnl)}">${escapeHtml(money(r.pnl))}</span>
+            <span class="meta">${nTrades(r.n)} · винрейт ${nf1.format((r.wins / r.n) * 100)}%</span>
+            <span class="bar"><i class="${tone(r.pnl) || 'pos'}" style="width:${((Math.abs(r.pnl) / max) * 100).toFixed(1)}%"></i></span>
+          </li>`).join('')}</ul>` : '');
+    }
+
+    const card = (title, body, cls = '') => `<div class="an-card ${cls}"><h3>${title}</h3>${body}</div>`;
     box.innerHTML = `<div class="an-grid">${[
       card('Long и Short', sidesHtml),
       card('Серии', streakHtml),
@@ -1409,8 +1501,18 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
       card('По дням недели', weekdayHtml),
       card('По часу входа', hourHtml),
       card('Результат в R', rHtml),
+      card('Ошибки и дисциплина', mistakesHtml, 'wide'),
     ].join('')}</div>`;
   }
+
+  $('#analytics').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-filter-tag]');
+    if (!b) return;
+    ui.search = b.dataset.filterTag;
+    $('#fSearch').value = ui.search;
+    render();
+    $('.journal').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+  });
 
   const dfMonth = new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric' });
   const dfDayLong = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long' });
@@ -1523,6 +1625,13 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     return `<button type="button" class="shot-badge" data-action="shots" aria-label="Скриншоты сделки ${escapeHtml(t.symbol)}: ${n}">${ICON_IMG}${n}</button>`;
   }
 
+  function tagLine(t) {
+    const tags = t.tags || [];
+    if (!tags.length) return '';
+    const onlyGood = tags.every((x) => x === GOOD_TAG);
+    return `<span class="tags${onlyGood ? ' good' : ''}">${escapeHtml(tags.join(' · '))}</span>`;
+  }
+
   function renderTable(list) {
     const sorted = [...list].sort((a, b) => b.openedAt.localeCompare(a.openedAt));
     $('#rows').innerHTML = sorted.map((t) => {
@@ -1538,7 +1647,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
         <td class="r num ${tone(c.pnl)}">${c.closed ? escapeHtml(money(c.pnl)) : '—'}</td>
         <td class="r num ${tone(c.ret)}">${pct(c.ret)}</td>
         <td class="r num ${tone(c.r)}">${rmult(c.r)}</td>
-        <td>${escapeHtml(t.setup) || '<span class="muted">—</span>'}</td>
+        <td>${escapeHtml(t.setup) || '<span class="muted">—</span>'}${tagLine(t)}</td>
         <td class="note" title="${escapeHtml(t.notes)}">${escapeHtml(t.notes)}</td>
         <td><div class="row-actions">
           ${c.closed ? '' : `<button type="button" class="btn-close-pos" data-action="close" aria-label="Закрыть позицию ${escapeHtml(t.symbol)}">Закрыть</button>`}
@@ -1571,6 +1680,10 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     form.reset();
     formImages = trade ? [...(trade.images || [])] : [];
     renderFormShots();
+    formTags = trade ? [...(trade.tags || [])] : [];
+    renderTagChips();
+    $('#tTagNew').value = '';
+    if (trade && trade.rating) form.elements.rating.value = String(trade.rating);
     $('#formError').hidden = true;
     $('#tradeDialogTitle').textContent = trade ? `Сделка ${trade.symbol}` : 'Новая сделка';
     $('#btnDeleteInForm').hidden = !trade;
@@ -1607,8 +1720,44 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
       target: toNum(f.target.value),
       setup: f.setup.value.trim(),
       notes: f.notes.value.trim(),
+      tags: [...formTags],
+      rating: f.rating.value ? Number(f.rating.value) : null,
     };
   }
+
+  // ---------- Tags ----------
+
+  let formTags = [];
+
+  function knownTags() {
+    const used = state.trades.flatMap((t) => t.tags || []);
+    return [...new Set([...PRESET_TAGS, ...used, ...formTags])];
+  }
+
+  function renderTagChips() {
+    $('#tagChips').innerHTML = knownTags().map((tag) => `<button type="button" class="tag-chip${tag === GOOD_TAG ? ' good' : ''}" data-tag="${escapeHtml(tag)}" aria-pressed="${formTags.includes(tag)}">${escapeHtml(tag)}</button>`).join('');
+  }
+
+  $('#tagChips').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-tag]');
+    if (!b) return;
+    const tag = b.dataset.tag;
+    formTags = formTags.includes(tag) ? formTags.filter((x) => x !== tag) : [...formTags, tag];
+    b.setAttribute('aria-pressed', String(formTags.includes(tag)));
+  });
+
+  function addCustomTag() {
+    const input = $('#tTagNew');
+    const tag = normalizeTags([input.value])[0];
+    input.value = '';
+    if (!tag) return;
+    if (!formTags.includes(tag)) formTags.push(tag);
+    renderTagChips();
+  }
+  $('#btnTagAdd').addEventListener('click', addCustomTag);
+  $('#tTagNew').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); addCustomTag(); }
+  });
 
   function updateSizer(t) {
     const box = $('#tradeSizer');

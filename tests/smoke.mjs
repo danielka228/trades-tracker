@@ -116,7 +116,7 @@ await step('app manifest and icons are in place', async () => {
 
 await step('analytics: sides, streaks, weekday, hours and R charts render', async () => {
   const page = await open({ width: 1280, height: 900 });
-  assert.equal(await page.locator('#analytics .an-card').count(), 6);
+  assert.equal(await page.locator('#analytics .an-card').count(), 7);
   const text = await page.textContent('#analytics');
   for (const part of ['Long', 'Short', 'Лучшая серия побед', 'В среднем', 'Медиана']) assert.ok(text.includes(part), `has ${part}`);
   assert.equal(await page.locator('#analytics .cols').nth(0).locator('.col').count(), 7);
@@ -199,6 +199,34 @@ await step('exchange import: unknown format lists the columns it found', async (
   await page.setInputFiles('#exFile', { name: 'odd.csv', mimeType: 'text/csv', buffer: Buffer.from('Foo,Bar\n1,2\n') });
   await page.waitForSelector('#exPreview p');
   assert.match(await page.textContent('#exPreview'), /Нашлись колонки: Foo, Bar/);
+});
+
+await step('tags: mistakes are tagged in the form, counted in analytics and searchable', async () => {
+  const page = await open({ width: 1280, height: 900 });
+  const card = page.locator('#analytics .an-card.wide');
+  assert.match(await card.textContent(), /Месть рынку/, 'sample tags show in the mistakes card');
+  await page.click('#btnClearSample');
+  await page.click('#btnAdd');
+  await page.fill('#tSymbol', 'btc');
+  await page.fill('#tEntry', '100');
+  await page.fill('#tQty', '1');
+  await page.fill('#tExit', '90');
+  await page.click('#tagChips [data-tag="FOMO"]');
+  await page.fill('#tTagNew', 'Новости');
+  await page.press('#tTagNew', 'Enter');
+  await page.click('label[for=tRate2]');
+  await page.click('#tradeForm button[type=submit]');
+  assert.match(await page.textContent('#rows'), /FOMO · Новости/);
+  const text = await card.textContent();
+  assert.match(text, /FOMO/);
+  assert.match(text, /оценка плана 2,0/);
+  await page.click('#analytics [data-filter-tag="Новости"]');
+  assert.equal(await page.inputValue('#fSearch'), 'Новости');
+  assert.equal(await page.locator('#rows tr').count(), 1);
+  // tags survive an edit round-trip
+  await page.locator('#rows tr').first().locator('[data-action=edit]').click();
+  assert.equal(await page.getAttribute('#tagChips [data-tag="FOMO"]', 'aria-pressed'), 'true');
+  assert.ok(await page.isChecked('#tRate2'));
 });
 
 await step('no script errors', async () => {
