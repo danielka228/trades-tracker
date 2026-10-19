@@ -1,8 +1,14 @@
-// Cloudflare deploy config: the site is plain static files from dist/ (built by `npm run build`).
+// Cloudflare deploy config. The site is plain static files from dist/ (built by `npm run build`),
+// served straight from the edge. Requests that match no file (only /tg/* in practice) go to the
+// Telegram bot in worker/index.js.
 {
   "name": "trades-tracker",
   "compatibility_date": "2026-09-01",
+  "main": "worker/index.js",
   "assets": {
-    "directory": "./dist"
-  }
+    "directory": "./dist",
+    "binding": "ASSETS"
+  },
+  // Keep variables added in the Cloudflare dashboard (e.g. TIMEZONE) when Cloudflare redeploys.
+  "keep_vars": true
 }
