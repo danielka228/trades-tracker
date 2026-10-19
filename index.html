@@ -171,6 +171,30 @@ main.wrap { display: flex; flex-direction: column; gap: 20px; padding-block: 20p
 .breakdown .bar i.pos { background: var(--profit); }
 .breakdown .bar i.neg { background: var(--loss); }
 
+/* Analytics */
+.an-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+@media (max-width: 700px) { .an-grid { grid-template-columns: minmax(0, 1fr); } }
+.an-card { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 14px; border-radius: 8px; background: var(--sunken); }
+.an-card h3 { margin: 0; font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.an-card .breakdown { gap: 12px; }
+.an-note { margin: 0; font-size: 13px; color: var(--muted); }
+.an-note b { color: var(--fg); font-weight: 600; }
+.an-kv { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; margin: 0; font-size: 14px; }
+.an-kv dt { color: var(--muted); }
+.an-kv dd { margin: 0; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.cols { display: flex; align-items: stretch; gap: 2px; }
+.col { display: flex; flex: 1 1 0; flex-direction: column; gap: 4px; min-width: 0; }
+.col-plot { position: relative; height: 112px; border-radius: 4px; }
+.col-plot::after { content: ""; position: absolute; left: 0; right: 0; top: var(--zero); border-top: 1px solid var(--line); }
+.col-plot i { position: absolute; left: 1px; right: 1px; display: block; min-height: 2px; }
+.col-plot i.up { border-radius: 4px 4px 0 0; }
+.col-plot i.down { border-radius: 0 0 4px 4px; }
+.col-plot i.pos { background: var(--profit); }
+.col-plot i.neg { background: var(--loss); }
+.col-plot i.flat { background: var(--muted); }
+.col:hover .col-plot { background: var(--surface); }
+.col > span { overflow: visible; font-size: 11px; color: var(--muted); text-align: center; white-space: nowrap; }
+
 /* Calendar */
 .cal-nav { display: flex; align-items: center; gap: 2px; }
 .cal-nav .month { min-width: 132px; text-align: center; font-weight: 600; }
@@ -399,6 +423,14 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
       <ul class="breakdown" id="breakdown"></ul>
     </section>
   </div>
+
+  <section class="panel" aria-labelledby="anTitle">
+    <div class="panel-head">
+      <h2 id="anTitle">Аналитика</h2>
+      <span class="muted" style="font-size:13px">по закрытым сделкам с учётом фильтров</span>
+    </div>
+    <div id="analytics"></div>
+  </section>
 
   <section class="panel" aria-labelledby="calTitle">
     <div class="panel-head">
@@ -937,6 +969,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     renderStats(stats);
     renderEquity(stats.curve);
     renderBreakdown(list);
+    renderAnalytics(list);
     renderCalendar(base);
     renderDayChip();
     renderTable(list);
@@ -1056,6 +1089,146 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
         <span class="meta">${r.n} ${plural(r.n, 'сделка', 'сделки', 'сделок')} · винрейт ${nf1.format((r.wins / r.n) * 100)}%</span>
         <span class="bar"><i class="${tone(r.pnl) || 'pos'}" style="width:${((Math.abs(r.pnl) / max) * 100).toFixed(1)}%"></i></span>
       </li>`).join('') : '<li class="muted">Пока нет закрытых сделок.</li>';
+  }
+
+  // ---------- Analytics ----------
+
+  const WEEKDAY_NAMES = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'];
+  const R_BUCKETS = [
+    { label: '<−2', test: (r) => r < -2, sign: -1 },
+    { label: '−2…−1', test: (r) => r >= -2 && r < -1, sign: -1 },
+    { label: '−1…0', test: (r) => r >= -1 && r < 0, sign: -1 },
+    { label: '0…1', test: (r) => r >= 0 && r < 1, sign: 1 },
+    { label: '1…2', test: (r) => r >= 1 && r < 2, sign: 1 },
+    { label: '2…3', test: (r) => r >= 2 && r < 3, sign: 1 },
+    { label: '≥3', test: (r) => r >= 3, sign: 1 },
+  ];
+
+  function duration(ms) {
+    const min = Math.round(ms / 60000);
+    if (min < 60) return `${min} мин`;
+    const h = Math.floor(min / 60), m = min % 60;
+    if (h < 24) return m ? `${h} ч ${m} мин` : `${h} ч`;
+    const d = Math.floor(h / 24), hh = h % 24;
+    return hh ? `${d} д ${hh} ч` : `${d} д`;
+  }
+
+  // Diverging column chart around a zero line; values go into each column's tooltip.
+  function columnChart(items, fmt) {
+    const pos = Math.max(0, ...items.map((i) => i.value));
+    const neg = Math.max(0, ...items.map((i) => -i.value));
+    const span = pos + neg || 1;
+    const zero = (pos / span) * 100;
+    return `<div class="cols" role="img" aria-label="${escapeHtml(items.map((i) => `${i.title}: ${fmt(i)}`).join('; '))}">${items.map((i) => {
+      const h = (Math.abs(i.value) / span) * 100;
+      const kind = i.kind || (i.value > 0 ? 'pos' : i.value < 0 ? 'neg' : 'flat');
+      const bar = i.n ? `<i class="${kind} ${i.value >= 0 ? 'up' : 'down'}" style="height:${h.toFixed(1)}%;${i.value >= 0 ? `bottom:${(100 - zero).toFixed(1)}%` : `top:${zero.toFixed(1)}%`}"></i>` : '';
+      return `<div class="col" title="${escapeHtml(`${i.title}: ${fmt(i)}`)}"><div class="col-plot" style="--zero:${zero.toFixed(1)}%">${bar}</div><span>${escapeHtml(i.label)}</span></div>`;
+    }).join('')}</div>`;
+  }
+
+  function renderAnalytics(list) {
+    const closed = list.map((t) => ({ t, c: calc(t) })).filter((x) => x.c.closed)
+      .sort((a, b) => closeTime(a.t).localeCompare(closeTime(b.t)));
+    const box = $('#analytics');
+    if (!closed.length) {
+      box.innerHTML = '<p class="an-note">Аналитика появится после первых закрытых сделок.</p>';
+      return;
+    }
+    const nTrades = (n) => `${n} ${plural(n, 'сделка', 'сделки', 'сделок')}`;
+
+    // Long vs Short
+    const sides = ['long', 'short'].map((side) => {
+      const xs = closed.filter((x) => x.t.side === side);
+      return { name: side === 'long' ? 'Long' : 'Short', n: xs.length, wins: xs.filter((x) => x.c.pnl > 0).length, pnl: xs.reduce((a, x) => a + x.c.pnl, 0) };
+    });
+    const sideMax = Math.max(1e-9, ...sides.map((x) => Math.abs(x.pnl)));
+    const sidesHtml = `<ul class="breakdown">${sides.map((x) => `
+      <li>
+        <span class="name">${x.name}</span>
+        <span class="val num ${tone(x.pnl)}">${x.n ? escapeHtml(money(x.pnl)) : '—'}</span>
+        <span class="meta">${x.n ? `${nTrades(x.n)} · винрейт ${nf1.format((x.wins / x.n) * 100)}%` : 'нет сделок'}</span>
+        <span class="bar"><i class="${tone(x.pnl) || 'pos'}" style="width:${((Math.abs(x.pnl) / sideMax) * 100).toFixed(1)}%"></i></span>
+      </li>`).join('')}</ul>`;
+
+    // Streaks
+    let cur = 0, bestWin = 0, worstLoss = 0;
+    for (const { c } of closed) {
+      if (c.pnl > 0) cur = cur > 0 ? cur + 1 : 1;
+      else if (c.pnl < 0) cur = cur < 0 ? cur - 1 : -1;
+      else cur = 0;
+      bestWin = Math.max(bestWin, cur);
+      worstLoss = Math.min(worstLoss, cur);
+    }
+    const curText = cur > 0 ? `<span class="pos">${cur} в плюс</span>` : cur < 0 ? `<span class="neg">${-cur} в минус</span>` : 'нет';
+    const streakHtml = `<dl class="an-kv">
+      <dt>Текущая серия</dt><dd>${curText}</dd>
+      <dt>Лучшая серия побед</dt><dd class="pos">${bestWin}</dd>
+      <dt>Худшая серия поражений</dt><dd class="${worstLoss ? 'neg' : ''}">${-worstLoss}</dd>
+    </dl>`;
+
+    // Holding time
+    const held = (xs) => {
+      const ms = xs.map((x) => new Date(x.t.closedAt) - new Date(x.t.openedAt)).filter((v) => Number.isFinite(v) && v >= 0);
+      return ms.length ? duration(ms.reduce((a, b) => a + b, 0) / ms.length) : '—';
+    };
+    const holdHtml = `<dl class="an-kv">
+      <dt>В среднем</dt><dd>${held(closed)}</dd>
+      <dt>Прибыльные сделки</dt><dd>${held(closed.filter((x) => x.c.pnl > 0))}</dd>
+      <dt>Убыточные сделки</dt><dd>${held(closed.filter((x) => x.c.pnl < 0))}</dd>
+    </dl>`;
+
+    // P&L by weekday (by close date)
+    const wd = WEEKDAYS.map((label, i) => ({ label, title: WEEKDAY_NAMES[i], value: 0, n: 0 }));
+    for (const { t, c } of closed) {
+      const d = new Date(closeTime(t));
+      if (Number.isNaN(d.getTime())) continue;
+      const w = wd[(d.getDay() + 6) % 7];
+      w.value += c.pnl; w.n += 1;
+    }
+    const traded = (xs) => xs.filter((x) => x.n);
+    const extremes = (xs, name) => {
+      const ys = traded(xs).sort((a, b) => b.value - a.value);
+      if (!ys.length) return '';
+      const best = ys[0], worst = ys[ys.length - 1];
+      return `<p class="an-note">Лучше всего: <b>${escapeHtml(name(best))}</b> <span class="num ${tone(best.value)}">${escapeHtml(money(best.value))}</span>`
+        + (ys.length > 1 && worst.value < best.value ? ` · хуже всего: <b>${escapeHtml(name(worst))}</b> <span class="num ${tone(worst.value)}">${escapeHtml(money(worst.value))}</span>` : '') + '</p>';
+    };
+    const fmtPnl = (i) => (i.n ? `${money(i.value)}, ${nTrades(i.n)}` : 'нет сделок');
+    const weekdayHtml = columnChart(wd, fmtPnl) + extremes(wd, (x) => x.title);
+
+    // P&L by entry hour
+    const hours = Array.from({ length: 24 }, (_, h) => ({ label: h % 3 === 0 ? String(h) : '', title: `${pad(h)}:00–${pad(h)}:59`, hour: h, value: 0, n: 0 }));
+    for (const { t, c } of closed) {
+      const h = Number(t.openedAt.slice(11, 13));
+      if (!Number.isInteger(h) || h < 0 || h > 23) continue;
+      hours[h].value += c.pnl; hours[h].n += 1;
+    }
+    const hourHtml = columnChart(hours, fmtPnl) + extremes(hours, (x) => `${pad(x.hour)}:00–${pad(x.hour + 1 === 24 ? 0 : x.hour + 1)}:00`);
+
+    // R distribution
+    const rs = closed.map((x) => x.c.r).filter((r) => r !== null);
+    let rHtml;
+    if (!rs.length) {
+      rHtml = '<p class="an-note">Указывайте стоп-лосс в сделках, и здесь появится распределение результатов в R.</p>';
+    } else {
+      const buckets = R_BUCKETS.map((b) => ({ label: b.label, title: `${b.label}R`, kind: b.sign < 0 ? 'neg' : 'pos', n: rs.filter(b.test).length }));
+      buckets.forEach((b) => { b.value = b.n; });
+      const sorted = [...rs].sort((a, b) => a - b);
+      const median = sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
+      rHtml = columnChart(buckets, (i) => nTrades(i.n))
+        + `<p class="an-note">Медиана <b class="num">${rmult(median)}</b> · сделок со стопом: ${rs.length} из ${closed.length}</p>`;
+    }
+
+    const card = (title, body) => `<div class="an-card"><h3>${title}</h3>${body}</div>`;
+    box.innerHTML = `<div class="an-grid">${[
+      card('Long и Short', sidesHtml),
+      card('Серии', streakHtml),
+      card('Время в сделке', holdHtml),
+      card('По дням недели', weekdayHtml),
+      card('По часу входа', hourHtml),
+      card('Результат в R', rHtml),
+    ].join('')}</div>`;
   }
 
   const dfMonth = new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric' });

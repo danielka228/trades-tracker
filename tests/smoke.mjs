@@ -114,6 +114,17 @@ await step('app manifest and icons are in place', async () => {
   assert.ok(fs.existsSync(path.join(root, 'sw.js')));
 });
 
+await step('analytics: sides, streaks, weekday, hours and R charts render', async () => {
+  const page = await open({ width: 1280, height: 900 });
+  assert.equal(await page.locator('#analytics .an-card').count(), 6);
+  const text = await page.textContent('#analytics');
+  for (const part of ['Long', 'Short', 'Лучшая серия побед', 'В среднем', 'Медиана']) assert.ok(text.includes(part), `has ${part}`);
+  assert.equal(await page.locator('#analytics .cols').nth(0).locator('.col').count(), 7);
+  assert.equal(await page.locator('#analytics .cols').nth(1).locator('.col').count(), 24);
+  await page.selectOption('#fSide', 'short');
+  assert.match(await page.textContent('#analytics .breakdown li:nth-child(1) .meta'), /нет сделок/);
+});
+
 await step('no script errors', async () => {
   assert.deepEqual(errors, []);
 });
