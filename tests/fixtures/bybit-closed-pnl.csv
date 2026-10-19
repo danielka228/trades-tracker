@@ -1,0 +1,4 @@
+Contracts,Closing Direction,Qty,Entry Price,Exit Price,Closed P&L,Opening Fee,Closing Fee,Exit Type,Trade Time(UTC+0)
+BTCUSDT,Sell,0.010,62000.0,63000.0,9.3125,0.3410,0.3465,Trade,2026-10-10 14:22:05
+ETHUSDT,Buy,0.50,2700.00,2650.00,23.5288,0.7425,0.7287,Trade,2026-10-11 09:05:41
+SOLUSDT,Sell,10,150.00,148.50,-16.6418,0.8250,0.8168,StopLoss,2026-10-12 18:44:10
