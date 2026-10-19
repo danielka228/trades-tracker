@@ -21,8 +21,17 @@
 
 Откройте `index.html` в браузере, и всё работает.
 
-Опубликовать как сайт через GitHub Pages: **Settings → Pages → Deploy from a branch**, выберите ветку `main` и папку `/ (root)`.
-Через минуту журнал будет доступен по адресу `https://<ваш-логин>.github.io/trades-tracker/`.
+Сайт публикуется на GitHub Pages автоматически: каждый merge в `main` запускает workflow **Deploy site**, и через минуту обновлённый журнал открывается по адресу <https://danielka228.github.io/trades-tracker/>.
+
+Один раз нужно включить Pages: **Settings → Pages → Source: GitHub Actions**. На бесплатном тарифе GitHub Pages работает только для публичных репозиториев.
+
+## Как вносятся изменения
+
+1. Изменения приходят pull request'ом в `main`.
+2. Workflow **Check** сам прогоняет `npm test`: открывает сайт в браузере без интерфейса и проверяет основные сценарии (форма, расчёты, календарь, импорт, удаление, вёрстка на телефоне).
+3. Когда проверка зелёная, остаётся нажать **Merge pull request**, и сайт обновится сам.
+
+Запустить проверки локально: `npm ci && npx playwright install chromium && npm test`.
 
 ## Где хранятся данные
 
