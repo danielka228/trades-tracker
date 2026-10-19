@@ -344,6 +344,10 @@ td .tags.good { color: var(--profit); }
 .tag-link { padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 500; text-align: left; cursor: pointer; }
 .tag-link:hover { text-decoration: underline; }
 
+/* Live prices */
+.live { font-style: italic; }
+td .live-sub { display: block; font-size: 12px; color: var(--muted); font-style: normal; }
+
 /* Quick close */
 .btn-close-pos {
   min-height: 28px; padding: 0 10px; margin-right: 4px;
@@ -888,6 +892,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
   function commit() {
     saveState();
     scheduleSync();
+    setTimeout(() => refreshPrices(true), 300);
   }
 
   // ---------- Helpers ----------
@@ -1160,8 +1165,10 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     const box = $('#account');
     const f = accountFigures();
     const notice = $('#riskNotice');
+    const fl = floatingTotal();
+    const flItem = fl ? `<div class="item" title="По ${fl.n} ${plural(fl.n, 'открытой позиции', 'открытым позициям', 'открытым позициям')} по ценам Binance"><span>Открытые сейчас</span><b class="live ${tone(fl.pnl)}">≈ ${escapeHtml(money(fl.pnl))}</b></div>` : '';
     if (!f) {
-      box.innerHTML = '<p>Укажите баланс счёта, чтобы видеть его рост, считать объём позиции по риску и следить за дневным лимитом убытка.</p><button type="button" class="btn push" data-account>Указать баланс</button>';
+      box.innerHTML = `${flItem}<p>Укажите баланс счёта, чтобы видеть его рост, считать объём позиции по риску и следить за дневным лимитом убытка.</p><button type="button" class="btn push" data-account>Указать баланс</button>`;
       notice.hidden = true;
       return;
     }
@@ -1170,6 +1177,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
       <div class="item"><span>Баланс</span><b>${escapeHtml(money(f.balance, { sign: false }))}</b></div>
       <div class="item"><span>С начала</span><b class="${tone(f.growth)}">${pct(f.growth)}</b></div>
       <div class="item"><span>Сегодня</span><b class="${tone(f.todayPnl)}">${f.todayTrades ? escapeHtml(money(f.todayPnl)) : '—'}</b>${meter}</div>
+      ${flItem}
       <div class="item"><span>Риск на сделку</span><b>${f.riskAmount === null ? '—' : `${nf1.format(f.riskPct)}% · ${escapeHtml(money(f.riskAmount, { sign: false }))}`}</b></div>
       <button type="button" class="btn push" data-account>Настроить</button>`;
     if (f.limit && f.used >= 0.8) {
@@ -1636,16 +1644,17 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     const sorted = [...list].sort((a, b) => b.openedAt.localeCompare(a.openedAt));
     $('#rows').innerHTML = sorted.map((t) => {
       const c = calc(t);
+      const live = c.closed ? null : floating(t);
       return `
       <tr data-id="${escapeHtml(t.id)}">
         <td class="num">${escapeHtml(fmtDate(t.openedAt))}${c.closed && t.closedAt ? `<span class="sub">→ ${escapeHtml(fmtDate(t.closedAt))}</span>` : ''}</td>
         <td><span class="sym">${escapeHtml(t.symbol)}</span>${shotBadge(t)}<span class="sub">${escapeHtml(t.market)}</span></td>
         <td><span class="pill ${t.side}">${t.side === 'long' ? 'Long' : 'Short'}</span></td>
         <td class="r num">${nfPrice.format(t.entry)}</td>
-        <td class="r num">${c.closed ? nfPrice.format(t.exit) : '<span class="pill open">Открыта</span>'}</td>
+        <td class="r num">${c.closed ? nfPrice.format(t.exit) : `<span class="pill open">Открыта</span>${liveLine(t, live)}`}</td>
         <td class="r num">${nfQty.format(t.qty)}</td>
-        <td class="r num ${tone(c.pnl)}">${c.closed ? escapeHtml(money(c.pnl)) : '—'}</td>
-        <td class="r num ${tone(c.ret)}">${pct(c.ret)}</td>
+        <td class="r num ${tone(live ? live.pnl : c.pnl)}">${c.closed ? escapeHtml(money(c.pnl)) : live ? `<span class="live" title="Плавающий результат по цене Binance">≈ ${escapeHtml(money(live.pnl))}</span>` : '—'}</td>
+        <td class="r num ${tone(live ? live.ret : c.ret)}">${c.closed || !live ? pct(c.ret) : `<span class="live">≈ ${pct(live.ret)}</span>`}</td>
         <td class="r num ${tone(c.r)}">${rmult(c.r)}</td>
         <td>${escapeHtml(t.setup) || '<span class="muted">—</span>'}${tagLine(t)}</td>
         <td class="note" title="${escapeHtml(t.notes)}">${escapeHtml(t.notes)}</td>
@@ -1894,6 +1903,97 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     toast('Сделка удалена');
   });
 
+  // ---------- Live prices ----------
+
+  // Public Binance prices for open crypto positions; nothing is sent but the ticker names.
+  const prices = new Map();
+  const unknownSymbols = new Set();
+  const QUOTES = 'USDT|USDC|FDUSD|BUSD|TUSD|EUR|TRY|BTC|ETH|BNB';
+  let pricesBusy = false, pricesAt = 0;
+
+  function priceSymbol(t) {
+    if (t.market !== 'Крипто') return null;
+    const s = String(t.symbol).toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/PERP$/, '');
+    if (!s) return null;
+    return new RegExp(`^[A-Z0-9]{2,}(${QUOTES})$`).test(s) ? s : `${s}USDT`;
+  }
+
+  function livePrice(t) {
+    const p = prices.get(priceSymbol(t));
+    return p ? p.price : null;
+  }
+
+  function floating(t) {
+    const price = livePrice(t);
+    if (price === null) return null;
+    const dir = t.side === 'short' ? -1 : 1;
+    const pnl = (price - t.entry) * t.qty * dir - (t.fees || 0);
+    const cost = t.entry * t.qty;
+    return { price, pnl, ret: cost ? (pnl / cost) * 100 : null };
+  }
+
+  function floatingTotal() {
+    let pnl = 0, n = 0;
+    for (const t of state.trades) {
+      if (calc(t).closed) continue;
+      const f = floating(t);
+      if (f) { pnl += f.pnl; n += 1; }
+    }
+    return n ? { pnl, n } : null;
+  }
+
+  function liveLine(t, live) {
+    if (!live) return '';
+    const parts = [`сейчас ${nfPrice.format(live.price)}`];
+    const dist = (level) => (Math.abs(level - live.price) / live.price) * 100;
+    const hitStop = t.stop && (t.side === 'long' ? live.price <= t.stop : live.price >= t.stop);
+    const hitTarget = t.target && (t.side === 'long' ? live.price >= t.target : live.price <= t.target);
+    if (t.stop) parts.push(hitStop ? 'стоп пройден' : `до стопа ${nf1.format(dist(t.stop))}%`);
+    if (t.target) parts.push(hitTarget ? 'тейк достигнут' : `до тейка ${nf1.format(dist(t.target))}%`);
+    return `<span class="live-sub">${escapeHtml(parts.join(' · '))}</span>`;
+  }
+
+  async function fetchTicker(base, symbol) {
+    const r = await fetch(`${base}/ticker/price?symbol=${encodeURIComponent(symbol)}`);
+    if (!r.ok) return null;
+    const d = await r.json();
+    const price = Number(d.price);
+    return Number.isFinite(price) && price > 0 ? price : null;
+  }
+
+  async function refreshPrices(force = false) {
+    const wanted = [...new Set(state.trades.filter((t) => !calc(t).closed).map(priceSymbol).filter(Boolean))]
+      .filter((sym) => !unknownSymbols.has(sym));
+    if (!wanted.length || pricesBusy || (!force && Date.now() - pricesAt < 5000)) return;
+    pricesBusy = true;
+    const now = Date.now();
+    try {
+      const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbols=${encodeURIComponent(JSON.stringify(wanted))}`);
+      if (res.ok) {
+        for (const d of await res.json()) {
+          const price = Number(d.price);
+          if (Number.isFinite(price) && price > 0) prices.set(d.symbol, { price, at: now });
+        }
+      } else if (res.status === 400) {
+        // One unknown ticker fails the whole batch: look each one up on spot, then on futures.
+        await Promise.all(wanted.map(async (sym) => {
+          const price = await fetchTicker('https://api.binance.com/api/v3', sym).catch(() => null)
+            ?? await fetchTicker('https://fapi.binance.com/fapi/v1', sym).catch(() => null);
+          if (price) prices.set(sym, { price, at: now });
+          else unknownSymbols.add(sym);
+        }));
+      }
+    } catch (e) {
+      /* offline or Binance unreachable: keep the last prices */
+    } finally {
+      pricesBusy = false;
+      pricesAt = Date.now();
+    }
+    render();
+  }
+
+  setInterval(() => { if (document.visibilityState === 'visible') refreshPrices(); }, 15000);
+
   // ---------- Quick close ----------
 
   const closeDialog = $('#closeDialog');
@@ -1907,10 +2007,12 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
     $('#closeInfo').textContent = `${t.side === 'long' ? 'Long' : 'Short'} ${t.symbol} · вход ${nfPrice.format(t.entry)} · объём ${nfQty.format(t.qty)}`;
     $('#cClosedAt').value = localIso(new Date());
     $('#cFees').value = t.fees || '';
-    $('#closeQuick').innerHTML = [['stop', 'По стопу'], ['target', 'По тейку']]
-      .filter(([key]) => t[key])
-      .map(([key, label]) => `<button type="button" class="chip" data-price="${t[key]}">${label} ${nfPrice.format(t[key])}</button>`)
-      .join('');
+    const market = livePrice(t);
+    $('#closeQuick').innerHTML = (market ? `<button type="button" class="chip" data-price="${market}">По рынку ${nfPrice.format(market)}</button>` : '')
+      + [['stop', 'По стопу'], ['target', 'По тейку']]
+        .filter(([key]) => t[key])
+        .map(([key, label]) => `<button type="button" class="chip" data-price="${t[key]}">${label} ${nfPrice.format(t[key])}</button>`)
+        .join('');
     updateClosePreview();
     closeDialog.showModal();
     $('#cExit').focus();
@@ -2938,6 +3040,7 @@ dialog h2 { margin: 0; font: 600 18px/1.3 var(--font-display); }
   }
 
   render();
+  refreshPrices(true);
   setSyncStatus(sync.error ? 'error' : 'ok');
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('sw.js').catch(() => { /* offline mode is unavailable here */ });

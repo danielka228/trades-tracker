@@ -22,11 +22,14 @@ async function step(name, fn) {
   }
 }
 
-async function open(viewport, colorScheme = 'light') {
+async function open(viewport, colorScheme = 'light', { binance } = {}) {
   const ctx = await browser.newContext({ viewport, colorScheme });
+  // Real prices would make results depend on the market, so Binance is either mocked or unreachable.
+  await ctx.route(/binance\.com/, binance || ((route) => route.abort()));
   const page = await ctx.newPage();
   page.on('pageerror', (e) => errors.push(e.message));
-  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  // Blocked or mocked network calls log 'Failed to load resource'; only real script errors count.
+  page.on('console', (m) => m.type() === 'error' && !m.text().startsWith('Failed to load resource') && errors.push(m.text()));
   await page.goto(PAGE);
   return page;
 }
@@ -227,6 +230,44 @@ await step('tags: mistakes are tagged in the form, counted in analytics and sear
   await page.locator('#rows tr').first().locator('[data-action=edit]').click();
   assert.equal(await page.getAttribute('#tagChips [data-tag="FOMO"]', 'aria-pressed'), 'true');
   assert.ok(await page.isChecked('#tRate2'));
+});
+
+await step('live prices: open crypto positions show floating P&L, unknown tickers fall back to futures', async () => {
+  const calls = [];
+  const binance = (route) => {
+    const url = new URL(route.request().url());
+    calls.push(url.host + url.pathname + url.search);
+    const json = (status, body) => route.fulfill({ status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(body) });
+    const symbols = url.searchParams.get('symbols');
+    const symbol = url.searchParams.get('symbol');
+    if (symbols) return JSON.parse(symbols).includes('FOOUSDT') ? json(400, { code: -1121 }) : json(200, JSON.parse(symbols).map((x) => ({ symbol: x, price: x === 'SOLUSDT' ? '155.5' : '1' })));
+    if (symbol === 'SOLUSDT' && url.host === 'api.binance.com') return json(200, { symbol, price: '155.5' });
+    if (symbol === 'FOOUSDT' && url.host === 'fapi.binance.com') return json(200, { symbol, price: '2' });
+    return json(400, { code: -1121 });
+  };
+  const page = await open({ width: 1280, height: 900 }, 'light', { binance });
+  const sol = page.locator('#rows tr', { hasText: 'SOLUSDT' }).filter({ has: page.locator('.pill.open') });
+  await sol.locator('.live').first().waitFor();
+  // SOL long 40 @ 151.6, fees 2.4: (155.5 - 151.6) * 40 - 2.4 = 153.6
+  assert.match(await sol.textContent(), /≈ \+153,60/);
+  assert.match(await sol.textContent(), /сейчас 155,50/);
+  assert.match(await page.textContent('#account'), /Открытые сейчас/);
+  const aapl = page.locator('#rows tr', { hasText: 'AAPL' }).filter({ has: page.locator('.pill.open') });
+  assert.equal(await aapl.locator('.live').count(), 0, 'stocks get no crypto price');
+  await sol.locator('[data-action=close]').click();
+  assert.match(await page.textContent('#closeQuick'), /По рынку 155,50/);
+  await page.keyboard.press('Escape');
+
+  await page.click('#btnAdd');
+  await page.fill('#tSymbol', 'foo');
+  await page.selectOption('#tMarket', 'Крипто');
+  await page.fill('#tEntry', '1');
+  await page.fill('#tQty', '10');
+  await page.click('#tradeForm button[type=submit]');
+  const foo = page.locator('#rows tr', { hasText: 'FOO' });
+  await foo.locator('.live').first().waitFor();
+  assert.match(await foo.textContent(), /≈ \+10,00/, '(2 - 1) * 10 from the futures price');
+  assert.ok(calls.some((c) => c.startsWith('fapi.binance.com')), 'falls back to futures');
 });
 
 await step('no script errors', async () => {
